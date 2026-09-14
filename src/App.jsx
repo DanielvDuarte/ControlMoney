@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
-import { Plus, Check, Trash2, ChevronLeft, ChevronRight, X, Pencil, AlertCircle, Wallet, LogOut, Tags } from "lucide-react";
+import { Plus, Check, Trash2, ChevronLeft, ChevronRight, X, Pencil, AlertCircle, Wallet, LogOut, Tags, Sparkles, Copy, ExternalLink } from "lucide-react";
 import { supabase } from "./lib/supabase";
 
 // ---------- helpers ----------
@@ -7,8 +7,79 @@ const MESES = ["Janeiro","Fevereiro","Março","Abril","Maio","Junho","Julho","Ag
 const monthKey = (y, m) => `${y}-${String(m + 1).padStart(2, "0")}`;
 const parseKey = (k) => { const [y, m] = k.split("-").map(Number); return { y, m: m - 1 }; };
 const brl = (n) => Number(n || 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+// Uma casa decimal só abaixo de 10%, para não poluir a linha da categoria.
+const pctTxt = (p) => `${p >= 10 ? Math.round(p) : p.toFixed(1).replace(".", ",")}%`;
 const addMeses = (key, n) => { const { y, m } = parseKey(key); const idx = y * 12 + m + n; return monthKey(Math.floor(idx / 12), idx % 12); };
 const CORES_CAT = ["#22c55e","#38bdf8","#f472b6","#fbbf24","#a78bfa","#fb7185","#34d399","#60a5fa","#facc15","#c084fc"];
+const soma = (lista) => lista.reduce((s, g) => s + Number(g.valor || 0), 0);
+
+// ------------------------------------------------------------
+//  Monta o texto que a pessoa cola no Claude. É aqui que mora o
+//  valor da funcionalidade: quanto melhor o resumo, melhor a análise.
+// ------------------------------------------------------------
+function montarResumo({ mesKey, renda, gastos, catPorId, historico }) {
+  const { y, m } = parseKey(mesKey);
+  const total = soma(gastos);
+  const daRenda = (v) => (renda > 0 ? ` (${pctTxt((v / renda) * 100)} da renda)` : "");
+  const L = [];
+
+  L.push("Estes são os gastos da minha casa, exportados do meu app de controle financeiro. Valores em reais (R$).");
+  L.push("");
+  L.push("Analise e me responda de forma direta e prática:");
+  L.push("1. Para onde meu dinheiro está indo — as categorias que mais pesam sobre a renda.");
+  L.push("2. O que mudou em relação aos meses anteriores: o que subiu, o que caiu e por quanto.");
+  L.push("3. Onde dá para cortar ou renegociar, com valores concretos.");
+  L.push("4. Os compromissos que já assumi (parcelas em aberto) e quando eles terminam.");
+  L.push("5. As três ações que fariam mais diferença no próximo mês.");
+  L.push("");
+  L.push("Não recomende investimentos nem produtos financeiros específicos — foque no que dá para fazer com os gastos abaixo.");
+  L.push("");
+  L.push(`## ${MESES[m]} de ${y} (mês atual)`);
+  L.push(`Renda: ${brl(renda)}`);
+  L.push(`Total de gastos: ${brl(total)}${daRenda(total)}`);
+  L.push(`${renda - total >= 0 ? "Sobra" : "Falta"}: ${brl(Math.abs(renda - total))}`);
+  L.push(`Já pago: ${brl(soma(gastos.filter(g => g.pago)))} · Em aberto: ${brl(soma(gastos.filter(g => !g.pago)))}`);
+  L.push("");
+
+  const grupos = {};
+  gastos.forEach(g => {
+    const nome = catPorId[g.categoria_id]?.nome || "Sem categoria";
+    (grupos[nome] ||= []).push(g);
+  });
+  Object.entries(grupos).sort((a, b) => soma(b[1]) - soma(a[1])).forEach(([nome, itens]) => {
+    const sub = soma(itens);
+    L.push(`### ${nome} — ${brl(sub)}${daRenda(sub)}`);
+    itens.forEach(g => {
+      const partes = [g.nome];
+      if (g.subcategoria) partes.push(`(${g.subcategoria})`);
+      if (g.total_parcelas > 1) partes.push(`— parcela ${g.parcela_atual}/${g.total_parcelas}`);
+      L.push(`- ${partes.join(" ")}: ${brl(g.valor)}${g.pago ? " [pago]" : " [em aberto]"}`);
+    });
+    L.push("");
+  });
+
+  const emAberto = gastos.filter(g => g.total_parcelas > 1 && g.parcela_atual < g.total_parcelas);
+  if (emAberto.length) {
+    L.push("## Parcelas que seguem nos próximos meses");
+    emAberto.forEach(g => {
+      const restantes = g.total_parcelas - g.parcela_atual;
+      const fim = parseKey(addMeses(mesKey, restantes));
+      L.push(`- ${g.nome}: ${brl(g.valor)}/mês, faltam ${restantes} (${brl(Number(g.valor) * restantes)} no total), última em ${MESES[fim.m]}/${fim.y}`);
+    });
+    L.push("");
+  }
+
+  if (historico.length) {
+    L.push("## Meses anteriores");
+    historico.forEach(h => {
+      const p = parseKey(h.mes);
+      L.push(`- ${MESES[p.m]}/${p.y}: renda ${brl(h.renda)}, gastos ${brl(h.total)}`);
+    });
+    L.push("");
+  }
+
+  return L.join("\n").trim();
+}
 
 // ============================================================
 //  Raiz: decide entre login e app conforme a sessão
@@ -137,6 +208,9 @@ function Painel({ usuario }) {
   const [editando, setEditando] = useState(null);
   const [editRenda, setEditRenda] = useState(false);
   const [modalCategorias, setModalCategorias] = useState(false);
+  const [modalAnalise, setModalAnalise] = useState(false);
+  const [analise, setAnalise] = useState(null);   // texto colado de volta do Claude
+  const [resumo, setResumo] = useState("");       // texto a levar para o Claude
   const { y, m } = parseKey(mesAtual);
 
   const catPorId = useMemo(() => Object.fromEntries(categorias.map(c => [c.id, c])), [categorias]);
@@ -150,12 +224,14 @@ function Painel({ usuario }) {
   // ---------- carregar dados do mês ----------
   const carregarMes = useCallback(async (mes) => {
     setCarregando(true);
-    const [g, r] = await Promise.all([
+    const [g, r, a] = await Promise.all([
       supabase.from("gastos").select("*").eq("mes", mes).order("created_at"),
       supabase.from("meses").select("renda").eq("mes", mes).maybeSingle(),
+      supabase.from("analises").select("texto").eq("mes", mes).maybeSingle(),
     ]);
     setGastos(g.data || []);
     setRenda(Number(r.data?.renda || 0));
+    setAnalise(a.data?.texto || null);
     setCarregando(false);
   }, []);
 
@@ -288,6 +364,36 @@ function Painel({ usuario }) {
     fechar(); carregarMes(mesAtual);
   };
 
+  // Busca os 5 meses anteriores só para dar contexto de comparação ao Claude.
+  const abrirAnalise = async () => {
+    const inicio = addMeses(mesAtual, -5);
+    const [gs, ms] = await Promise.all([
+      supabase.from("gastos").select("mes, valor").gte("mes", inicio).lt("mes", mesAtual),
+      supabase.from("meses").select("mes, renda").gte("mes", inicio).lt("mes", mesAtual),
+    ]);
+    const rendaPorMes = Object.fromEntries((ms.data || []).map(r => [r.mes, Number(r.renda || 0)]));
+    const totalPorMes = {};
+    (gs.data || []).forEach(g => { totalPorMes[g.mes] = (totalPorMes[g.mes] || 0) + Number(g.valor || 0); });
+    const historico = [...new Set([...Object.keys(rendaPorMes), ...Object.keys(totalPorMes)])].sort()
+      .map(mes => ({ mes, renda: rendaPorMes[mes] || 0, total: totalPorMes[mes] || 0 }));
+
+    setResumo(montarResumo({ mesKey: mesAtual, renda, gastos, catPorId, historico }));
+    setModalAnalise(true);
+  };
+
+  const salvarAnalise = async (texto) => {
+    const t = texto.trim();
+    if (!t) return;
+    await supabase.from("analises").upsert({ user_id: usuario.id, mes: mesAtual, texto: t }, { onConflict: "user_id,mes" });
+    setAnalise(t);
+  };
+
+  const apagarAnalise = async () => {
+    if (!window.confirm("Apagar a análise guardada deste mês?")) return;
+    await supabase.from("analises").delete().eq("mes", mesAtual);
+    setAnalise(null);
+  };
+
   const abrirNovo = () => { setEditando(null); setModalGasto(true); };
   const abrirEdicao = (g) => { setEditando({ ...g, categoriaNome: catPorId[g.categoria_id]?.nome }); setModalGasto(true); };
   const fechar = () => { setModalGasto(false); setEditando(null); };
@@ -326,6 +432,12 @@ function Painel({ usuario }) {
           <div style={S.resumoCard}><span style={S.resumoLabel}>Falta pagar</span><span style={{ ...S.resumoVal, color: totais.pendente > 0 ? "#fbbf24" : "#4ade80" }}>{brl(totais.pendente)}</span></div>
         </section>
 
+        <button style={S.btnAnalise} onClick={abrirAnalise} disabled={carregando}>
+          <Sparkles size={15} strokeWidth={2.5} />
+          {analise ? "Ver análise do mês" : "Analisar meus gastos no Claude"}
+          {analise && <span style={S.selo}>salva</span>}
+        </button>
+
         <main style={S.lista}>
           {carregando ? (
             <div style={S.vazio}>Carregando {MESES[m]}…</div>
@@ -338,11 +450,14 @@ function Painel({ usuario }) {
             Object.entries(porCategoria).map(([cat, itens]) => {
               const cor = categorias.find(c => c.nome === cat)?.cor || "#64748b";
               const subtotal = itens.reduce((s, g) => s + Number(g.valor || 0), 0);
+              // Sem renda informada não há do que tirar porcentagem.
+              const pct = renda > 0 ? (subtotal / renda) * 100 : null;
               return (
                 <div key={cat} style={S.grupo}>
                   <div style={S.grupoHead}>
                     <span style={{ ...S.dot, background: cor }} />
                     <span style={S.grupoNome}>{cat}</span>
+                    {pct !== null && <span style={S.grupoPct} title={`${cat} consome ${pctTxt(pct)} da renda do mês`}>{pctTxt(pct)}</span>}
                     <span style={S.grupoTotal}>{brl(subtotal)}</span>
                   </div>
                   {itens.map(g => (
@@ -373,6 +488,8 @@ function Painel({ usuario }) {
       {editRenda && <ModalRenda valor={renda} onFechar={() => setEditRenda(false)} onSalvar={definirRenda} />}
       {modalCategorias && <ModalCategorias categorias={categorias} onFechar={() => setModalCategorias(false)}
         onRemoverCat={removerCategoria} onRemoverSub={removerSub} />}
+      {modalAnalise && <ModalAnalise resumo={resumo} analise={analise} onFechar={() => setModalAnalise(false)}
+        onSalvar={salvarAnalise} onApagar={apagarAnalise} />}
     </Tela>
   );
 }
@@ -393,6 +510,69 @@ function ModalRenda({ valor, onFechar, onSalvar }) {
         <button style={S.btnSec} onClick={onFechar}>Cancelar</button>
         <button style={S.btnPri} onClick={() => onSalvar(v)}>Salvar</button>
       </div>
+    </Overlay>
+  );
+}
+
+function ModalAnalise({ resumo, analise, onFechar, onSalvar, onApagar }) {
+  const [copiado, setCopiado] = useState(false);
+  const [colando, setColando] = useState(false);
+  const [texto, setTexto] = useState("");
+  const refResumo = useRef(null);
+
+  const copiar = async () => {
+    try {
+      await navigator.clipboard.writeText(resumo);
+    } catch {
+      // Navegador sem permissão de área de transferência: seleciona o texto
+      // para a pessoa copiar na mão (Ctrl+C / toque longo).
+      refResumo.current?.select();
+      return;
+    }
+    setCopiado(true);
+    setTimeout(() => setCopiado(false), 2200);
+  };
+
+  return (
+    <Overlay onFechar={onFechar}>
+      <h2 style={S.modalTitulo}>Analisar no Claude</h2>
+      <p style={S.modalAjuda}>
+        Copie o resumo do mês, cole no Claude e traga a resposta de volta para cá.
+        Funciona na conta gratuita — nada é enviado por este app.
+      </p>
+
+      {analise && !colando ? (
+        <>
+          <div style={S.analiseBox}>{analise}</div>
+          <div style={S.modalAcoes}>
+            <button style={S.btnSec} onClick={onApagar}>Apagar</button>
+            <button style={S.btnPri} onClick={() => { setTexto(analise); setColando(true); }}>Refazer</button>
+          </div>
+        </>
+      ) : (
+        <>
+          <div style={S.passo}><span style={S.passoNum}>1</span> Copie o resumo</div>
+          <textarea ref={refResumo} style={S.resumoBox} value={resumo} readOnly rows={6} />
+          <button style={{ ...S.btnCopiar, background: copiado ? "#166534" : "#1e2534" }} onClick={copiar}>
+            {copiado ? <><Check size={15} strokeWidth={3} /> Copiado</> : <><Copy size={15} /> Copiar resumo</>}
+          </button>
+
+          <div style={S.passo}><span style={S.passoNum}>2</span> Cole no Claude e peça a análise</div>
+          <a style={S.btnClaude} href="https://claude.ai/new" target="_blank" rel="noopener noreferrer">
+            <Sparkles size={15} strokeWidth={2.5} /> Abrir o Claude <ExternalLink size={13} />
+          </a>
+
+          <div style={S.passo}><span style={S.passoNum}>3</span> Traga a resposta de volta</div>
+          <textarea style={S.input} rows={4} value={texto} onChange={e => setTexto(e.target.value)}
+            placeholder="Cole aqui a análise que o Claude escreveu…" />
+
+          <div style={S.modalAcoes}>
+            <button style={S.btnSec} onClick={onFechar}>Fechar</button>
+            <button style={{ ...S.btnPri, opacity: texto.trim() ? 1 : 0.5 }} disabled={!texto.trim()}
+              onClick={() => { onSalvar(texto); setColando(false); }}>Guardar no mês</button>
+          </div>
+        </>
+      )}
     </Overlay>
   );
 }
@@ -584,6 +764,7 @@ const S = {
   grupoHead: { display: "flex", alignItems: "center", gap: 8, padding: "0 4px 2px" },
   dot: { width: 9, height: 9, borderRadius: 99, flexShrink: 0 },
   grupoNome: { fontWeight: 700, fontSize: 14, flex: 1, letterSpacing: "-0.01em" },
+  grupoPct: { fontSize: 11, fontWeight: 600, color: "#64748b", background: "#141a26", border: "1px solid #232a38", borderRadius: 99, padding: "1px 7px", fontVariantNumeric: "tabular-nums" },
   grupoTotal: { fontSize: 13, color: "#94a3b8", fontWeight: 600, fontVariantNumeric: "tabular-nums" },
 
   item: { display: "flex", alignItems: "center", gap: 11, padding: "11px 13px", borderRadius: 12, border: "1px solid", transition: "background .15s" },
@@ -595,6 +776,15 @@ const S = {
   iconBtn: { width: 28, height: 28, borderRadius: 7, border: "none", background: "transparent", color: "#475569", cursor: "pointer", display: "grid", placeItems: "center", flexShrink: 0 },
 
   fab: { position: "fixed", bottom: 20, left: "50%", transform: "translateX(-50%)", display: "inline-flex", alignItems: "center", gap: 7, background: "#22c55e", color: "#04120a", fontWeight: 700, fontSize: 15, border: "none", borderRadius: 99, padding: "13px 22px", cursor: "pointer", boxShadow: "0 8px 24px rgba(34,197,94,0.35)" },
+
+  btnAnalise: { display: "flex", alignItems: "center", justifyContent: "center", gap: 8, width: "100%", marginBottom: 18, background: "#141a26", border: "1px solid #232a38", borderRadius: 12, padding: "11px", color: "#cbd5e1", fontSize: 14, fontWeight: 600, cursor: "pointer" },
+  selo: { fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.04em", color: "#4ade80", background: "rgba(34,197,94,0.14)", border: "1px solid rgba(34,197,94,0.35)", borderRadius: 99, padding: "1px 7px" },
+  passo: { display: "flex", alignItems: "center", gap: 8, fontSize: 13, fontWeight: 600, color: "#94a3b8", margin: "18px 0 8px" },
+  passoNum: { display: "grid", placeItems: "center", width: 19, height: 19, borderRadius: 99, background: "#232a38", color: "#cbd5e1", fontSize: 11, fontWeight: 700, flexShrink: 0 },
+  resumoBox: { width: "100%", background: "#0f1420", border: "1px solid #232a38", borderRadius: 10, padding: "10px 12px", color: "#94a3b8", fontSize: 12, lineHeight: 1.5, fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace", resize: "vertical" },
+  btnCopiar: { display: "flex", alignItems: "center", justifyContent: "center", gap: 7, width: "100%", marginTop: 8, border: "1px solid #232a38", borderRadius: 10, padding: "11px", color: "#e2e8f0", fontSize: 14, fontWeight: 600, cursor: "pointer", transition: "background 0.15s" },
+  btnClaude: { display: "flex", alignItems: "center", justifyContent: "center", gap: 7, width: "100%", background: "#c96442", border: "none", borderRadius: 10, padding: "11px", color: "#fff", fontSize: 14, fontWeight: 600, textDecoration: "none", cursor: "pointer" },
+  analiseBox: { background: "#0f1420", border: "1px solid #232a38", borderRadius: 10, padding: "12px 14px", color: "#cbd5e1", fontSize: 13.5, lineHeight: 1.6, whiteSpace: "pre-wrap", maxHeight: "50vh", overflowY: "auto" },
 
   catLista: { display: "flex", flexDirection: "column", gap: 8, maxHeight: "50vh", overflowY: "auto", margin: "0 -4px", padding: "0 4px" },
   catLinha: { border: "1px solid #232a38", borderRadius: 11, padding: "10px 8px 10px 12px", background: "#161b26" },

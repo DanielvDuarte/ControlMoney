@@ -17,8 +17,14 @@ No ar em **https://danielvduarte.github.io/ControlMoney/**
 - Parcelamento: um gasto em N parcelas é lançado automaticamente nos próximos N meses (1/N, 2/N…).
 - Marcar como pago (fica verde); resumo de pago / falta pagar.
 - Renda por mês, com o saldo (sobra) calculado em cima dela.
+- Quanto cada categoria consumiu da renda, em porcentagem (aparece quando há
+  renda informada no mês).
 - Navegação por mês — cada mês é independente, dá para voltar e ver o que ficou pendente.
 - Sync em tempo real: alterar num aparelho reflete no outro.
+- **Analisar no Claude**: monta um resumo do mês (categorias, porcentagens,
+  parcelas em aberto, comparativo com os meses anteriores) para você colar no
+  Claude e trazer a resposta de volta, guardada naquele mês. Funciona na conta
+  gratuita — o app não chama nenhuma API nem envia seus dados para lugar algum.
 
 ---
 
@@ -140,6 +146,8 @@ src/
 - `meses(id, user_id, mes 'YYYY-MM', renda)` — uma linha por mês, guarda a renda.
 - `gastos(id, user_id, mes, nome, valor, categoria_id, subcategoria, pago,
   grupo_parcela, parcela_atual, total_parcelas)` — parcelas compartilham `grupo_parcela`.
+- `analises(id, user_id, mes, texto)` — a análise que você colou de volta do
+  Claude, uma por mês.
 
 ## Apêndice: publicar no Cloudflare Pages (repo privado)
 

@@ -130,6 +130,32 @@ Sem ele, o HTML procuraria os arquivos em `/assets/…` e a tela abriria preta.
 
 ---
 
+## A funcionalidade "Analisar no Claude"
+
+Decisão de arquitetura que vale registrar, porque a alternativa óbvia era outra.
+
+O app **não chama a API do Claude**. Ele monta o texto do mês, oferece um botão
+de copiar e um link para o claude.ai; a pessoa cola lá, na conta dela, e traz a
+resposta de volta num campo que guarda o texto na tabela `analises`.
+
+Por que assim, e não uma Edge Function chamando a API:
+
+- **A API do Claude não tem camada gratuita** — é crédito pré-pago. O plano
+  grátis do claude.ai é só a interface de conversa, e não existe forma
+  legítima de um app terceiro consumi-la por baixo dos panos.
+- **Custo zero** para todo mundo, e nenhuma chave de API para guardar.
+- **Privacidade**: os dados financeiros não saem do projeto por iniciativa do
+  app. Quem envia é a pessoa, conscientemente, colando no chat dela.
+
+O preço disso é o passo manual (copiar / colar / colar de volta). Se um dia
+fizer sentido automatizar, o caminho é uma Edge Function do Supabase com a
+chave como secret — e ela reaproveita o mesmo `montarResumo()` que já existe
+em [src/App.jsx](src/App.jsx). Nunca coloque uma chave de API no front: o
+bundle é público.
+
+A qualidade da análise depende inteiramente de `montarResumo()`. É lá que se
+mexe para melhorar o resultado, não no prompt que a pessoa digita.
+
 ## Rotina de manutenção
 
 **Alterar o app:** edite, `git push`, e o deploy sai sozinho em ~1 minuto.

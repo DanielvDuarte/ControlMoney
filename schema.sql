@@ -29,6 +29,16 @@ create table if not exists public.meses (
   unique (user_id, mes)
 );
 
+-- ---------- ANÁLISES (texto colado de volta do Claude) ----------
+create table if not exists public.analises (
+  id         uuid primary key default gen_random_uuid(),
+  user_id    uuid not null default auth.uid() references auth.users(id) on delete cascade,
+  mes        text not null,               -- 'YYYY-MM'
+  texto      text not null,
+  created_at timestamptz not null default now(),
+  unique (user_id, mes)
+);
+
 -- ---------- GASTOS ----------
 create table if not exists public.gastos (
   id             uuid primary key default gen_random_uuid(),
@@ -54,6 +64,7 @@ create index if not exists gastos_grupo_idx     on public.gastos (grupo_parcela)
 alter table public.categorias enable row level security;
 alter table public.meses      enable row level security;
 alter table public.gastos     enable row level security;
+alter table public.analises   enable row level security;
 
 -- CATEGORIAS
 create policy "cat_select" on public.categorias for select using (auth.uid() = user_id);
@@ -66,6 +77,12 @@ create policy "mes_select" on public.meses for select using (auth.uid() = user_i
 create policy "mes_insert" on public.meses for insert with check (auth.uid() = user_id);
 create policy "mes_update" on public.meses for update using (auth.uid() = user_id) with check (auth.uid() = user_id);
 create policy "mes_delete" on public.meses for delete using (auth.uid() = user_id);
+
+-- ANÁLISES
+create policy "ana_select" on public.analises for select using (auth.uid() = user_id);
+create policy "ana_insert" on public.analises for insert with check (auth.uid() = user_id);
+create policy "ana_update" on public.analises for update using (auth.uid() = user_id) with check (auth.uid() = user_id);
+create policy "ana_delete" on public.analises for delete using (auth.uid() = user_id);
 
 -- GASTOS
 create policy "gasto_select" on public.gastos for select using (auth.uid() = user_id);
