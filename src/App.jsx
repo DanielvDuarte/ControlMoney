@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
-import { Plus, Check, Trash2, ChevronLeft, ChevronRight, X, Pencil, AlertCircle, Wallet, LogOut } from "lucide-react";
+import { Plus, Check, Trash2, ChevronLeft, ChevronRight, X, Pencil, AlertCircle, Wallet, LogOut, Tags } from "lucide-react";
 import { supabase } from "./lib/supabase";
 
 // ---------- helpers ----------
@@ -136,6 +136,7 @@ function Painel({ usuario }) {
   const [modalGasto, setModalGasto] = useState(false);
   const [editando, setEditando] = useState(null);
   const [editRenda, setEditRenda] = useState(false);
+  const [modalCategorias, setModalCategorias] = useState(false);
   const { y, m } = parseKey(mesAtual);
 
   const catPorId = useMemo(() => Object.fromEntries(categorias.map(c => [c.id, c])), [categorias]);
@@ -235,6 +236,32 @@ function Painel({ usuario }) {
     await carregarCategorias();
   };
 
+  // Apagar categoria: os gastos que a usam não somem — a FK é `on delete set
+  // null`, então eles caem no grupo "Sem categoria" com os valores intactos.
+  const removerCategoria = async (cat) => {
+    const { count } = await supabase.from("gastos")
+      .select("id", { count: "exact", head: true }).eq("categoria_id", cat.id);
+    const aviso = count
+      ? `"${cat.nome}" está em ${count} gasto${count > 1 ? "s" : ""}.\n\n` +
+        `Apagando a categoria, esses gastos continuam existindo, mas passam a ` +
+        `aparecer como "Sem categoria".\n\nApagar mesmo assim?`
+      : `Apagar a categoria "${cat.nome}"?`;
+    if (!window.confirm(aviso)) return;
+    await supabase.from("categorias").delete().eq("id", cat.id);
+    await carregarCategorias();
+    carregarMes(mesAtual);
+  };
+
+  const removerSub = async (cat, sub) => {
+    if (!window.confirm(
+      `Remover a subcategoria "${sub}" de ${cat.nome}?\n\n` +
+      `Ela some da lista de opções. Gastos já lançados com esse nome não mudam.`
+    )) return;
+    const novas = (cat.subs || []).filter(s => s !== sub);
+    await supabase.from("categorias").update({ subs: novas }).eq("id", cat.id);
+    await carregarCategorias();
+  };
+
   const salvarGasto = async (form) => {
     const { nome, valor, categoria, subcategoria, parcelas } = form;
     const cat = await garantirCategoria(categoria);
@@ -276,7 +303,8 @@ function Painel({ usuario }) {
             <button style={S.btnNav} onClick={() => navegarMes(-1)} aria-label="Mês anterior"><ChevronLeft size={18} /></button>
             <div style={S.mesLabel}>{MESES[m]} <span style={{ color: "#64748b" }}>{y}</span></div>
             <button style={S.btnNav} onClick={() => navegarMes(1)} aria-label="Próximo mês"><ChevronRight size={18} /></button>
-            <button style={{ ...S.btnNav, marginLeft: 6 }} onClick={() => supabase.auth.signOut()} aria-label="Sair"><LogOut size={16} /></button>
+            <button style={{ ...S.btnNav, marginLeft: 6 }} onClick={() => setModalCategorias(true)} aria-label="Categorias"><Tags size={16} /></button>
+            <button style={S.btnNav} onClick={() => supabase.auth.signOut()} aria-label="Sair"><LogOut size={16} /></button>
           </div>
         </header>
 
@@ -343,6 +371,8 @@ function Painel({ usuario }) {
 
       {modalGasto && <ModalGasto categorias={categorias} editando={editando} onFechar={fechar} onSalvar={salvarGasto} />}
       {editRenda && <ModalRenda valor={renda} onFechar={() => setEditRenda(false)} onSalvar={definirRenda} />}
+      {modalCategorias && <ModalCategorias categorias={categorias} onFechar={() => setModalCategorias(false)}
+        onRemoverCat={removerCategoria} onRemoverSub={removerSub} />}
     </Tela>
   );
 }
@@ -358,10 +388,55 @@ function ModalRenda({ valor, onFechar, onSalvar }) {
       <p style={S.modalAjuda}>É sobre esse valor que o saldo é calculado.</p>
       <label style={S.label}>Valor disponível (R$)</label>
       <input autoFocus type="number" inputMode="decimal" style={S.input} value={v}
-        onChange={e => setV(e.target.value)} onKeyDown={e => e.key === "Enter" && onSalvar(v)} placeholder="12000" />
+        onChange={e => setV(e.target.value)} onKeyDown={e => e.key === "Enter" && onSalvar(v)} placeholder="1000" />
       <div style={S.modalAcoes}>
         <button style={S.btnSec} onClick={onFechar}>Cancelar</button>
         <button style={S.btnPri} onClick={() => onSalvar(v)}>Salvar</button>
+      </div>
+    </Overlay>
+  );
+}
+
+function ModalCategorias({ categorias, onFechar, onRemoverCat, onRemoverSub }) {
+  return (
+    <Overlay onFechar={onFechar}>
+      <h2 style={S.modalTitulo}>Categorias</h2>
+      <p style={S.modalAjuda}>Apague o que criou por engano ou não usa mais.</p>
+
+      {categorias.length === 0 ? (
+        <div style={S.catVazio}>
+          Nenhuma categoria ainda. Elas nascem junto com o primeiro gasto que você lançar.
+        </div>
+      ) : (
+        <div style={S.catLista}>
+          {categorias.map(c => (
+            <div key={c.id} style={S.catLinha}>
+              <div style={S.catTopo}>
+                <span style={{ ...S.dot, background: c.cor }} />
+                <span style={S.catNome}>{c.nome}</span>
+                <button style={S.iconBtn} onClick={() => onRemoverCat(c)} aria-label={`Apagar categoria ${c.nome}`}>
+                  <Trash2 size={14} />
+                </button>
+              </div>
+              {c.subs?.length > 0 && (
+                <div style={S.catChips}>
+                  {c.subs.map(s => (
+                    <span key={s} style={S.catChip}>
+                      {s}
+                      <button style={S.catChipX} onClick={() => onRemoverSub(c, s)} aria-label={`Remover subcategoria ${s}`}>
+                        <X size={11} strokeWidth={2.5} />
+                      </button>
+                    </span>
+                  ))}
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+
+      <div style={S.modalAcoes}>
+        <button style={S.btnSec} onClick={onFechar}>Fechar</button>
       </div>
     </Overlay>
   );
@@ -520,6 +595,15 @@ const S = {
   iconBtn: { width: 28, height: 28, borderRadius: 7, border: "none", background: "transparent", color: "#475569", cursor: "pointer", display: "grid", placeItems: "center", flexShrink: 0 },
 
   fab: { position: "fixed", bottom: 20, left: "50%", transform: "translateX(-50%)", display: "inline-flex", alignItems: "center", gap: 7, background: "#22c55e", color: "#04120a", fontWeight: 700, fontSize: 15, border: "none", borderRadius: 99, padding: "13px 22px", cursor: "pointer", boxShadow: "0 8px 24px rgba(34,197,94,0.35)" },
+
+  catLista: { display: "flex", flexDirection: "column", gap: 8, maxHeight: "50vh", overflowY: "auto", margin: "0 -4px", padding: "0 4px" },
+  catLinha: { border: "1px solid #232a38", borderRadius: 11, padding: "10px 8px 10px 12px", background: "#161b26" },
+  catTopo: { display: "flex", alignItems: "center", gap: 9 },
+  catNome: { flex: 1, minWidth: 0, fontSize: 15, fontWeight: 600 },
+  catChips: { display: "flex", flexWrap: "wrap", gap: 6, marginTop: 9, paddingLeft: 18 },
+  catChip: { display: "inline-flex", alignItems: "center", gap: 4, fontSize: 12, color: "#94a3b8", background: "#0f1420", border: "1px solid #232a38", borderRadius: 99, padding: "3px 4px 3px 10px" },
+  catChipX: { display: "grid", placeItems: "center", width: 17, height: 17, borderRadius: 99, border: "none", background: "transparent", color: "#64748b", cursor: "pointer" },
+  catVazio: { fontSize: 13, color: "#64748b", border: "1px dashed #232a38", borderRadius: 11, padding: "18px 14px", textAlign: "center" },
 
   overlay: { position: "fixed", inset: 0, background: "rgba(4,7,12,0.7)", backdropFilter: "blur(4px)", display: "grid", placeItems: "center", padding: 16, zIndex: 50 },
   modal: { position: "relative", width: "100%", maxWidth: 420, maxHeight: "90vh", overflowY: "auto", background: "#0f1420", border: "1px solid #232a38", borderRadius: 18, padding: "24px 22px" },

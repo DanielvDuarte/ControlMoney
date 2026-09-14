@@ -74,8 +74,9 @@ create policy "gasto_update" on public.gastos for update using (auth.uid() = use
 create policy "gasto_delete" on public.gastos for delete using (auth.uid() = user_id);
 
 -- ============================================================
---  Categorias iniciais para cada novo usuário (trigger)
---  Cria Casa / Daniel / Brenda / Crianças / Empresa ao cadastrar.
+--  Categoria inicial para cada novo usuário (trigger)
+--  Só "Casa", para a conta não nascer vazia. As demais o próprio
+--  usuário cria na hora de lançar um gasto, e pode apagar depois.
 -- ============================================================
 create or replace function public.seed_categorias()
 returns trigger
@@ -85,11 +86,7 @@ set search_path = public
 as $$
 begin
   insert into public.categorias (user_id, nome, cor) values
-    (new.id, 'Casa',     '#22c55e'),
-    (new.id, 'Daniel',   '#38bdf8'),
-    (new.id, 'Brenda',   '#f472b6'),
-    (new.id, 'Crianças', '#fbbf24'),
-    (new.id, 'Empresa',  '#a78bfa');
+    (new.id, 'Casa', '#22c55e');
   return new;
 end;
 $$;

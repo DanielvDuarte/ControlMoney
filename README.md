@@ -3,10 +3,17 @@
 App de controle de gastos mensais com backend Supabase (Postgres + Auth),
 sincronizado entre celular e computador. React + Vite.
 
+No ar em **https://danielvduarte.github.io/ControlMoney/**
+
+> Este README explica como montar o projeto do zero. Para o que já está
+> configurado nesta instalação — endereços, decisões e solução de problemas —
+> veja **[SETUP.md](SETUP.md)**.
+
 ## O que faz
 
 - Login por e-mail/senha ou conta Google; cada usuário só vê os próprios dados (RLS no Postgres).
-- Gastos por categoria e subcategoria (subcategoria opcional, criável na hora).
+- Gastos por categoria e subcategoria (criáveis na hora, e apagáveis pelo
+  botão de categorias no cabeçalho).
 - Parcelamento: um gasto em N parcelas é lançado automaticamente nos próximos N meses (1/N, 2/N…).
 - Marcar como pago (fica verde); resumo de pago / falta pagar.
 - Renda por mês, com o saldo (sobra) calculado em cima dela.
@@ -20,11 +27,14 @@ sincronizado entre celular e computador. React + Vite.
 1. Em https://supabase.com crie um projeto (free tier serve). Anote a senha do banco.
 2. No painel, vá em **SQL Editor** → cole todo o conteúdo de `schema.sql` → **Run**.
    Isso cria as tabelas, ativa RLS, as policies por usuário e o gatilho que
-   já cadastra as categorias iniciais (Casa, Daniel, Brenda, Crianças, Empresa)
-   para cada conta nova.
-3. Em **Project Settings → API**, copie:
-   - **Project URL** → vai em `VITE_SUPABASE_URL`
-   - **anon public key** → vai em `VITE_SUPABASE_ANON_KEY`
+   cadastra a categoria inicial (Casa) em cada conta nova — o resto você cria
+   conforme lança os gastos.
+3. Em **Project Settings → API Keys**, copie:
+   - **Project URL** (em *Data API*) → vai em `VITE_SUPABASE_URL`.
+     É só o domínio, sem o `/rest/v1/` do fim.
+   - **Publishable key** (`sb_publishable_…`) → vai em `VITE_SUPABASE_ANON_KEY`.
+     Em projetos antigos ela aparece como *anon public* (um `eyJ…`); as duas
+     funcionam. A **secret key** não: ela ignora o RLS e nunca vai para o front.
 4. (Opcional, recomendado para uso pessoal) Em **Authentication → Providers → Email**,
    você pode desligar "Confirm email" para entrar direto sem confirmar por link.
    Se mantiver ligado, confirme pelo e-mail antes do primeiro login.
@@ -62,8 +72,9 @@ Supabase.
 
 Sem o passo 6 o Google devolve o usuário para a Site URL errada depois do login.
 
-> A `anon key` é pública por design — ela vai no bundle do front. A segurança
-> vem do RLS: sem uma sessão válida, as policies não retornam nenhuma linha.
+> Essa chave é pública por design — ela vai no bundle do front, legível por
+> qualquer um. A segurança vem do RLS: sem uma sessão válida, as policies não
+> retornam nenhuma linha.
 
 ## 2. Publicar no GitHub Pages
 
@@ -110,6 +121,8 @@ npm run dev               # abre em http://localhost:5173
 ## Estrutura
 
 ```
+README.md                       este arquivo (instalação do zero)
+SETUP.md                        como esta instalação está configurada
 schema.sql                      SQL do banco (rode uma vez no Supabase)
 index.html
 vite.config.js                  base do Pages fica aqui
@@ -139,6 +152,11 @@ src/
    endereço, e nada mais muda.
 
 Netlify e Vercel seguem o mesmo padrão.
+
+## Deu problema?
+
+A tabela de sintomas e causas está em [SETUP.md](SETUP.md#problemas-conhecidos-e-como-reconhecê-los)
+— tela preta, `redirect_uri_mismatch`, Actions falhando, card vermelho no topo.
 
 ## Ideias para depois
 
