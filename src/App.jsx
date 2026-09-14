@@ -38,6 +38,19 @@ function Login() {
   const [erro, setErro] = useState("");
   const [carregando, setCarregando] = useState(false);
 
+  const entrarComGoogle = async () => {
+    setErro(""); setMsg(""); setCarregando(true);
+    const { error } = await supabase.auth.signInWithOAuth({
+      provider: "google",
+      // Volta para a própria página depois do consentimento no Google.
+      // BASE_URL importa no GitHub Pages, onde o app não fica na raiz do domínio.
+      options: { redirectTo: window.location.origin + import.meta.env.BASE_URL },
+    });
+    // Em caso de sucesso o navegador já saiu daqui; só chegamos na linha
+    // abaixo se o redirecionamento falhou.
+    if (error) { setErro(traduzErro(error.message)); setCarregando(false); }
+  };
+
   const enviar = async () => {
     setErro(""); setMsg(""); setCarregando(true);
     try {
@@ -62,6 +75,12 @@ function Login() {
         <div style={S.marca}><Wallet size={22} strokeWidth={2.5} color="#22c55e" /><span>Contas do mês</span></div>
         <p style={S.loginSub}>Suas contas em qualquer aparelho, sincronizadas.</p>
 
+        <button style={{ ...S.btnGoogle, opacity: carregando ? 0.6 : 1 }} onClick={entrarComGoogle} disabled={carregando}>
+          <GoogleIcon /> Entrar com Google
+        </button>
+
+        <div style={S.divisor}><span style={S.divisorLinha} /> ou <span style={S.divisorLinha} /></div>
+
         <label style={S.label}>E-mail</label>
         <input style={S.input} type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="voce@exemplo.com" autoComplete="email" />
 
@@ -84,10 +103,23 @@ function Login() {
   );
 }
 
+// Logo do Google em SVG — evita depender de imagem externa.
+function GoogleIcon() {
+  return (
+    <svg width="17" height="17" viewBox="0 0 48 48" aria-hidden="true">
+      <path fill="#4285F4" d="M45.1 24.5c0-1.6-.1-3.2-.4-4.7H24v8.9h11.8c-.5 2.7-2 5.1-4.4 6.6v5.5h7.1c4.1-3.8 6.6-9.5 6.6-16.3z" />
+      <path fill="#34A853" d="M24 46c5.9 0 10.9-2 14.5-5.3l-7.1-5.5c-2 1.3-4.5 2.1-7.4 2.1-5.7 0-10.6-3.8-12.3-9H4.3v5.7C7.9 41.2 15.4 46 24 46z" />
+      <path fill="#FBBC05" d="M11.7 28.3c-.4-1.3-.7-2.7-.7-4.3s.3-3 .7-4.3v-5.7H4.3A22 22 0 0 0 2 24c0 3.6.9 6.9 2.3 9.9l7.4-5.6z" />
+      <path fill="#EA4335" d="M24 10.6c3.2 0 6.1 1.1 8.4 3.3l6.3-6.3C34.9 4.1 29.9 2 24 2 15.4 2 7.9 6.8 4.3 13.9l7.4 5.7c1.7-5.2 6.6-9 12.3-9z" />
+    </svg>
+  );
+}
+
 function traduzErro(m = "") {
   if (/invalid login credentials/i.test(m)) return "E-mail ou senha incorretos.";
   if (/already registered/i.test(m)) return "Este e-mail já tem conta. Tente entrar.";
   if (/password should be at least/i.test(m)) return "A senha precisa ter pelo menos 6 caracteres.";
+  if (/provider is not enabled/i.test(m)) return "O login com Google ainda não está ativado no Supabase.";
   return m;
 }
 
@@ -446,6 +478,9 @@ const S = {
 
   loginWrap: { maxWidth: 380, margin: "0 auto", padding: "80px 20px 0" },
   loginSub: { color: "#64748b", fontSize: 14, margin: "8px 0 28px" },
+  btnGoogle: { display: "flex", alignItems: "center", justifyContent: "center", gap: 10, width: "100%", background: "#ffffff", border: "none", borderRadius: 10, padding: "12px", color: "#1f2937", fontSize: 15, fontWeight: 600, cursor: "pointer" },
+  divisor: { display: "flex", alignItems: "center", gap: 12, margin: "20px 0 4px", color: "#475569", fontSize: 12 },
+  divisorLinha: { flex: 1, height: 1, background: "#232a38" },
   linkBtn: { display: "block", width: "100%", textAlign: "center", background: "transparent", border: "none", color: "#38bdf8", fontSize: 14, marginTop: 16, cursor: "pointer" },
 
   header: { display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 18 },

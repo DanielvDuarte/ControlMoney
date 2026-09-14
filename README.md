@@ -5,7 +5,7 @@ sincronizado entre celular e computador. React + Vite.
 
 ## O que faz
 
-- Login por e-mail/senha; cada usuário só vê os próprios dados (RLS no Postgres).
+- Login por e-mail/senha ou conta Google; cada usuário só vê os próprios dados (RLS no Postgres).
 - Gastos por categoria e subcategoria (subcategoria opcional, criável na hora).
 - Parcelamento: um gasto em N parcelas é lançado automaticamente nos próximos N meses (1/N, 2/N…).
 - Marcar como pago (fica verde); resumo de pago / falta pagar.
@@ -29,10 +29,75 @@ sincronizado entre celular e computador. React + Vite.
    você pode desligar "Confirm email" para entrar direto sem confirmar por link.
    Se mantiver ligado, confirme pelo e-mail antes do primeiro login.
 
+### 1.1 Ativar o login com Google
+
+O botão "Entrar com Google" já existe na tela de login, mas só funciona depois
+de ligar o provider. São duas partes: criar a credencial no Google e colar no
+Supabase.
+
+**No Google Cloud Console** (https://console.cloud.google.com):
+
+1. Crie (ou escolha) um projeto.
+2. **APIs & Services → OAuth consent screen**: tipo **External**, preencha nome do
+   app, e-mail de suporte e e-mail do desenvolvedor. Enquanto o app estiver em
+   "Testing", adicione seu Gmail em **Test users** — ou publique o app.
+3. **APIs & Services → Credentials → Create credentials → OAuth client ID**,
+   tipo **Web application**. Em **Authorized redirect URIs**, cole a callback do
+   Supabase (ela aparece pronta no painel do Supabase, em
+   Authentication → Providers → Google):
+
+   ```
+   https://SEU-PROJETO.supabase.co/auth/v1/callback
+   ```
+
+4. Copie o **Client ID** e o **Client secret**.
+
+**No Supabase** (Authentication → Providers → **Google**):
+
+5. Ative o provider, cole Client ID e Client secret, salve.
+6. Em **Authentication → URL Configuration**, ajuste:
+   - **Site URL**: `https://danielvduarte.github.io/ControlMoney/`
+   - **Redirect URLs**: adicione `https://danielvduarte.github.io/ControlMoney/**`
+     e, se for rodar local algum dia, `http://localhost:5173/**`.
+
+Sem o passo 6 o Google devolve o usuário para a Site URL errada depois do login.
+
 > A `anon key` é pública por design — ela vai no bundle do front. A segurança
 > vem do RLS: sem uma sessão válida, as policies não retornam nenhuma linha.
 
-## 2. Rodar localmente
+## 2. Publicar no GitHub Pages
+
+O build roda no GitHub Actions — você **não precisa de Node instalado**. O
+workflow em `.github/workflows/deploy.yml` compila e publica a cada `push` na
+branch `main`.
+
+Configure uma vez, no repositório (github.com/DanielvDuarte/ControlMoney):
+
+1. **Settings → Pages → Build and deployment → Source**: escolha
+   **GitHub Actions** (não "Deploy from a branch").
+2. **Settings → Secrets and variables → Actions → aba Variables →
+   New repository variable**, duas vezes:
+   - `VITE_SUPABASE_URL` = a Project URL do Supabase
+   - `VITE_SUPABASE_ANON_KEY` = a anon public key
+3. Dê `git push` (ou rode o workflow na mão em **Actions → Deploy no GitHub
+   Pages → Run workflow**). Ao terminar, o app fica em:
+
+   ```
+   https://danielvduarte.github.io/ControlMoney/
+   ```
+
+> O GitHub Pages em conta gratuita exige **repositório público**. O código fica
+> visível, o que aqui é inofensivo: a anon key é pública por design e os dados
+> são protegidos pelo RLS. Se preferir manter o repo privado, o Cloudflare Pages
+> publica repositório privado de graça — veja o apêndice no fim.
+
+### Instalar como app no celular
+Abra o link no navegador do celular e use "Adicionar à tela de início" — ele
+abre em tela cheia, como um app.
+
+## 3. Rodar localmente (opcional)
+
+Só faz sentido para mexer no código. Precisa de Node 18+:
 
 ```bash
 cp .env.example .env      # preencha URL e anon key
@@ -40,39 +105,20 @@ npm install
 npm run dev               # abre em http://localhost:5173
 ```
 
-## 3. Publicar
-
-O front é estático (`npm run build` gera a pasta `dist/`). Qualquer host de
-estáticos serve. Cloudflare Pages, por exemplo:
-
-1. Suba o projeto num repositório Git.
-2. No Cloudflare Pages, conecte o repo com:
-   - **Build command:** `npm run build`
-   - **Output directory:** `dist`
-3. Em **Settings → Environment variables**, adicione
-   `VITE_SUPABASE_URL` e `VITE_SUPABASE_ANON_KEY`.
-4. Deploy. Abra o link no celular e no PC — mesma conta, mesmos dados.
-
-Netlify e Vercel seguem o mesmo padrão (build `npm run build`, publish `dist`,
-e as duas variáveis de ambiente).
-
-### Instalar como app no celular
-Depois de publicado, abra o link no navegador do celular e use
-"Adicionar à tela de início" — ele abre em tela cheia como um app.
-
 ---
 
 ## Estrutura
 
 ```
-schema.sql            SQL do banco (rode uma vez no Supabase)
+schema.sql                      SQL do banco (rode uma vez no Supabase)
 index.html
-vite.config.js
+vite.config.js                  base do Pages fica aqui
 .env.example
+.github/workflows/deploy.yml    build + deploy automático
 src/
-  main.jsx
-  App.jsx             app inteiro (login + painel + modais)
-  lib/supabase.js     cliente Supabase
+  main.jsx                      ponto de entrada do React
+  App.jsx                       app inteiro (login + painel + modais)
+  lib/supabase.js               cliente Supabase
 ```
 
 ## Modelo de dados
@@ -81,6 +127,18 @@ src/
 - `meses(id, user_id, mes 'YYYY-MM', renda)` — uma linha por mês, guarda a renda.
 - `gastos(id, user_id, mes, nome, valor, categoria_id, subcategoria, pago,
   grupo_parcela, parcela_atual, total_parcelas)` — parcelas compartilham `grupo_parcela`.
+
+## Apêndice: publicar no Cloudflare Pages (repo privado)
+
+1. Em https://pages.cloudflare.com, conecte o repositório.
+2. **Build command:** `npm run build` — **Output directory:** `dist`
+3. Em **Settings → Environment variables**, adicione `VITE_SUPABASE_URL`,
+   `VITE_SUPABASE_ANON_KEY` e `VITE_BASE` = `/`
+   (o app passa a ser servido na raiz do domínio, não em `/ControlMoney/`).
+4. Atualize a **Site URL** e as **Redirect URLs** no Supabase para o novo
+   endereço, e nada mais muda.
+
+Netlify e Vercel seguem o mesmo padrão.
 
 ## Ideias para depois
 
