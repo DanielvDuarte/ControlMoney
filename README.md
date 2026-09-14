@@ -26,6 +26,7 @@ No ar em **https://danielvduarte.github.io/ControlMoney/**
 - Quanto cada categoria consumiu da renda, em porcentagem (aparece quando há
   renda informada no mês).
 - Navegação por mês — cada mês é independente, dá para voltar e ver o que ficou pendente.
+- Tema claro ou escuro, num botão no cabeçalho; a escolha fica salva no aparelho.
 - Sync em tempo real: alterar num aparelho reflete no outro.
 - **Importar extrato (OFX)**: lê o arquivo do banco no próprio navegador, mostra
   as transações para você marcar categoria e confirmar, e ignora o que já foi

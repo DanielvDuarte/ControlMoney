@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
-import { Plus, Check, Trash2, ChevronLeft, ChevronRight, X, Pencil, AlertCircle, Wallet, LogOut, Tags, Sparkles, Copy, ExternalLink, Upload, Download, Share } from "lucide-react";
+import { Plus, Check, Trash2, ChevronLeft, ChevronRight, X, Pencil, AlertCircle, Wallet, LogOut, Tags, Sparkles, Copy, ExternalLink, Upload, Download, Share, Sun, Moon } from "lucide-react";
 import { supabase } from "./lib/supabase";
 
 // ---------- helpers ----------
@@ -186,7 +186,12 @@ function Login() {
   return (
     <Tela>
       <div style={S.loginWrap}>
-        <div style={S.marca}><Wallet size={22} strokeWidth={2.5} color="#22c55e" /><span>Contas do mês</span></div>
+        <div style={{ ...S.marca, justifyContent: "space-between" }}>
+          <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <Wallet size={22} strokeWidth={2.5} color="var(--verde)" /> Contas do mês
+          </span>
+          <BotaoTema />
+        </div>
         <p style={S.loginSub}>Suas contas em qualquer aparelho, sincronizadas.</p>
 
         <button style={{ ...S.btnGoogle, opacity: carregando ? 0.6 : 1 }} onClick={entrarComGoogle} disabled={carregando}>
@@ -203,7 +208,7 @@ function Login() {
           onKeyDown={e => e.key === "Enter" && enviar()} placeholder="••••••••" autoComplete={modo === "entrar" ? "current-password" : "new-password"} />
 
         {erro && <div style={S.erro}><AlertCircle size={14} /> {erro}</div>}
-        {msg && <div style={{ ...S.erro, color: "#4ade80" }}><Check size={14} /> {msg}</div>}
+        {msg && <div style={{ ...S.erro, color: "var(--verde-claro)" }}><Check size={14} /> {msg}</div>}
 
         <button style={{ ...S.btnPri, width: "100%", marginTop: 18, opacity: carregando ? 0.6 : 1 }} onClick={enviar} disabled={carregando}>
           {carregando ? "…" : modo === "entrar" ? "Entrar" : "Criar conta"}
@@ -521,22 +526,23 @@ function Painel({ usuario }) {
     <Tela>
       <div style={S.wrap}>
         <header style={S.header}>
-          <div style={S.marca}><Wallet size={20} strokeWidth={2.5} color="#22c55e" /><span>Contas do mês</span></div>
+          <div style={S.marca}><Wallet size={20} strokeWidth={2.5} color="var(--verde)" /><span>Contas do mês</span></div>
           <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
             <button style={S.btnNav} onClick={() => navegarMes(-1)} aria-label="Mês anterior"><ChevronLeft size={18} /></button>
-            <div style={S.mesLabel}>{MESES[m]} <span style={{ color: "#64748b" }}>{y}</span></div>
+            <div style={S.mesLabel}>{MESES[m]} <span style={{ color: "var(--texto-4)" }}>{y}</span></div>
             <button style={S.btnNav} onClick={() => navegarMes(1)} aria-label="Próximo mês"><ChevronRight size={18} /></button>
-            <button style={{ ...S.btnNav, marginLeft: 6 }} onClick={() => setModalCategorias(true)} aria-label="Categorias"><Tags size={16} /></button>
+            <BotaoTema />
+            <button style={S.btnNav} onClick={() => setModalCategorias(true)} aria-label="Categorias"><Tags size={16} /></button>
             <button style={S.btnNav} onClick={() => supabase.auth.signOut()} aria-label="Sair"><LogOut size={16} /></button>
           </div>
         </header>
 
-        <section style={{ ...S.heroSaldo, borderColor: saldoNeg ? "#7f1d1d" : "#14532d" }}>
+        <section style={{ ...S.heroSaldo, borderColor: saldoNeg ? "var(--vermelho-borda)" : "var(--verde-borda)" }}>
           <div style={S.heroTopo}>
             <span style={S.heroLabel}>{saldoNeg ? "Faltam" : "Sobra depois de tudo"}</span>
             <button style={S.rendaBtn} onClick={() => setEditRenda(true)}>Renda: {brl(renda)} <Pencil size={12} /></button>
           </div>
-          <div style={{ ...S.heroValor, color: saldoNeg ? "#f87171" : "#4ade80" }}>{brl(Math.abs(totais.saldo))}</div>
+          <div style={{ ...S.heroValor, color: saldoNeg ? "var(--vermelho)" : "var(--verde-claro)" }}>{brl(Math.abs(totais.saldo))}</div>
           <div style={S.barraWrap}>
             <div style={S.barra}><div style={{ ...S.barraFill, width: `${Math.min(100, renda ? (totais.total / renda) * 100 : 0)}%` }} /></div>
             <span style={S.barraTxt}>{brl(totais.total)} de {brl(renda)} comprometidos</span>
@@ -545,8 +551,8 @@ function Painel({ usuario }) {
 
         <section style={S.resumo}>
           <div style={S.resumoCard}><span style={S.resumoLabel}>Total do mês</span><span style={S.resumoVal}>{brl(totais.total)}</span></div>
-          <div style={S.resumoCard}><span style={S.resumoLabel}>Já pago</span><span style={{ ...S.resumoVal, color: "#4ade80" }}>{brl(totais.pago)}</span></div>
-          <div style={S.resumoCard}><span style={S.resumoLabel}>Falta pagar</span><span style={{ ...S.resumoVal, color: totais.pendente > 0 ? "#fbbf24" : "#4ade80" }}>{brl(totais.pendente)}</span></div>
+          <div style={S.resumoCard}><span style={S.resumoLabel}>Já pago</span><span style={{ ...S.resumoVal, color: "var(--verde-claro)" }}>{brl(totais.pago)}</span></div>
+          <div style={S.resumoCard}><span style={S.resumoLabel}>Falta pagar</span><span style={{ ...S.resumoVal, color: totais.pendente > 0 ? "var(--ambar)" : "var(--verde-claro)" }}>{brl(totais.pendente)}</span></div>
         </section>
 
         <button style={S.btnAnalise} onClick={abrirAnalise} disabled={carregando}>
@@ -566,12 +572,12 @@ function Painel({ usuario }) {
             <div style={S.vazio}>Carregando {MESES[m]}…</div>
           ) : gastos.length === 0 ? (
             <div style={S.vazio}>
-              <p style={{ margin: 0, fontWeight: 600, color: "#e2e8f0" }}>Nenhum gasto em {MESES[m]}.</p>
+              <p style={{ margin: 0, fontWeight: 600, color: "var(--texto)" }}>Nenhum gasto em {MESES[m]}.</p>
               <p style={{ margin: "6px 0 0", fontSize: 14 }}>Toque em <b>+ Novo gasto</b> para começar.</p>
             </div>
           ) : (
             Object.entries(porCategoria).map(([cat, itens]) => {
-              const cor = categorias.find(c => c.nome === cat)?.cor || "#64748b";
+              const cor = categorias.find(c => c.nome === cat)?.cor || "var(--texto-4)";
               const subtotal = itens.reduce((s, g) => s + Number(g.valor || 0), 0);
               // Sem renda informada não há do que tirar porcentagem.
               const pct = renda > 0 ? (subtotal / renda) * 100 : null;
@@ -584,17 +590,17 @@ function Painel({ usuario }) {
                     <span style={S.grupoTotal}>{brl(subtotal)}</span>
                   </div>
                   {itens.map(g => (
-                    <div key={g.id} style={{ ...S.item, background: g.pago ? "rgba(34,197,94,0.14)" : "#161b26", borderColor: g.pago ? "rgba(34,197,94,0.4)" : "#232a38" }}>
-                      <button style={{ ...S.check, background: g.pago ? "#22c55e" : "transparent", borderColor: g.pago ? "#22c55e" : "#3a4353" }}
+                    <div key={g.id} style={{ ...S.item, background: g.pago ? "rgba(34,197,94,0.14)" : "var(--superficie)", borderColor: g.pago ? "rgba(34,197,94,0.4)" : "var(--borda)" }}>
+                      <button style={{ ...S.check, background: g.pago ? "var(--verde)" : "transparent", borderColor: g.pago ? "var(--verde)" : "var(--borda-3)" }}
                         onClick={() => togglePago(g)} aria-label={g.pago ? "Marcar como não pago" : "Marcar como pago"}>
-                        {g.pago && <Check size={14} strokeWidth={3} color="#0a0e16" />}
+                        {g.pago && <Check size={14} strokeWidth={3} color="var(--fundo)" />}
                       </button>
                       <div style={{ flex: 1, minWidth: 0 }}>
                         <div style={S.itemNome}>{g.nome}{g.total_parcelas > 1 && <span style={S.parcela}>{g.parcela_atual}/{g.total_parcelas}</span>}</div>
                         {g.subcategoria && <div style={S.itemSub}>{g.subcategoria}</div>}
                         {g.observacao && <div style={S.itemObs}>{g.observacao}</div>}
                       </div>
-                      <div style={{ ...S.itemValor, color: g.pago ? "#4ade80" : "#e2e8f0" }}>{brl(g.valor)}</div>
+                      <div style={{ ...S.itemValor, color: g.pago ? "var(--verde-claro)" : "var(--texto)" }}>{brl(g.valor)}</div>
                       <button style={S.iconBtn} onClick={() => abrirEdicao(g)} aria-label="Editar"><Pencil size={14} /></button>
                       <button style={S.iconBtn} onClick={() => removerGasto(g)} aria-label="Remover"><Trash2 size={14} /></button>
                     </div>
@@ -703,9 +709,9 @@ function ModalImportar({ categorias, onFechar, onPreparar, onImportar }) {
       {!linhas ? (
         <>
           <label style={S.dropZone}>
-            <Upload size={22} color="#475569" />
-            <span style={{ fontWeight: 600, color: "#cbd5e1" }}>Escolher arquivo .ofx</span>
-            <span style={{ fontSize: 12, color: "#64748b" }}>no banco, procure por "OFX" ou "gerenciador financeiro"</span>
+            <Upload size={22} color="var(--texto-5)" />
+            <span style={{ fontWeight: 600, color: "var(--texto-2)" }}>Escolher arquivo .ofx</span>
+            <span style={{ fontSize: 12, color: "var(--texto-4)" }}>no banco, procure por "OFX" ou "gerenciador financeiro"</span>
             <input type="file" accept=".ofx,.OFX,text/plain" style={{ display: "none" }}
               onChange={e => carregarArquivo(e.target.files?.[0])} />
           </label>
@@ -750,7 +756,7 @@ function ModalImportar({ categorias, onFechar, onPreparar, onImportar }) {
                     </select>
                   )}
                 </div>
-                <div style={{ ...S.impValor, color: l.credito ? "#4ade80" : "#e2e8f0" }}>
+                <div style={{ ...S.impValor, color: l.credito ? "var(--verde-claro)" : "var(--texto)" }}>
                   {l.credito ? "+" : ""}{brl(Math.abs(l.valor))}
                 </div>
               </div>
@@ -814,7 +820,7 @@ function ModalAnalise({ resumo, analise, onFechar, onSalvar, onApagar }) {
         <>
           <div style={S.passo}><span style={S.passoNum}>1</span> Copie o resumo</div>
           <textarea ref={refResumo} style={S.resumoBox} value={resumo} readOnly rows={6} />
-          <button style={{ ...S.btnCopiar, background: copiado ? "#166534" : "#1e2534" }} onClick={copiar}>
+          <button style={{ ...S.btnCopiar, background: copiado ? "var(--verde-escuro)" : "var(--botao-neutro)" }} onClick={copiar}>
             {copiado ? <><Check size={15} strokeWidth={3} /> Copiado</> : <><Copy size={15} /> Copiar resumo</>}
           </button>
 
@@ -950,7 +956,7 @@ function ModalGasto({ categorias, editando, erroExterno, onFechar, onSalvar }) {
         </div>
       )}
 
-      <label style={S.label}>Subcategoria <span style={{ color: "#64748b", fontWeight: 400 }}>(opcional)</span></label>
+      <label style={S.label}>Subcategoria <span style={{ color: "var(--texto-4)", fontWeight: 400 }}>(opcional)</span></label>
       {!criandoSub ? (
         <div style={S.linhaSelect}>
           <select style={S.select} value={subcategoria} onChange={e => setSubcategoria(e.target.value)} disabled={criandoCat}>
@@ -966,7 +972,7 @@ function ModalGasto({ categorias, editando, erroExterno, onFechar, onSalvar }) {
         </div>
       )}
 
-      <label style={S.label}>Observação <span style={{ color: "#64748b", fontWeight: 400 }}>(opcional)</span></label>
+      <label style={S.label}>Observação <span style={{ color: "var(--texto-4)", fontWeight: 400 }}>(opcional)</span></label>
       <textarea style={{ ...S.input, minHeight: 62, resize: "vertical" }} value={observacao}
         onChange={e => setObservacao(e.target.value)} placeholder="Ex: negociado até dezembro, conferir reajuste…" />
 
@@ -1040,6 +1046,36 @@ function Overlay({ children, onFechar }) {
 // ============================================================
 const CHAVE_DISPENSA = "convite-instalar-dispensado";
 
+// ============================================================
+//  Tema claro / escuro
+//  As cores vivem em variáveis CSS (index.html); aqui só trocamos o
+//  atributo data-tema na raiz, e o navegador repinta tudo sozinho.
+// ============================================================
+const lerTema = () => {
+  try { return localStorage.getItem("tema") === "claro" ? "claro" : "escuro"; }
+  catch { return "escuro"; }
+};
+
+function BotaoTema() {
+  const [tema, setTema] = useState(lerTema);
+
+  useEffect(() => {
+    document.documentElement.dataset.tema = tema;
+    // A barra do navegador no celular acompanha o fundo do app.
+    const meta = document.querySelector('meta[name="theme-color"]');
+    if (meta) meta.setAttribute("content", tema === "claro" ? "#f5f6f9" : "#0a0e16");
+    try { localStorage.setItem("tema", tema); } catch { /* navegação privativa */ }
+  }, [tema]);
+
+  return (
+    <button style={S.btnNav} onClick={() => setTema(t => (t === "claro" ? "escuro" : "claro"))}
+      aria-label={tema === "claro" ? "Usar tema escuro" : "Usar tema claro"}
+      title={tema === "claro" ? "Tema escuro" : "Tema claro"}>
+      {tema === "claro" ? <Moon size={16} /> : <Sun size={16} />}
+    </button>
+  );
+}
+
 // Instrução manual por navegador, para quando o `beforeinstallprompt` não
 // existe ou ainda não disparou — o Chrome só o emite depois de algum
 // engajamento, e o Firefox nunca o emite.
@@ -1102,7 +1138,7 @@ function ConviteInstalar() {
 
   return (
     <div style={S.convite}>
-      <div style={S.conviteIcone}><Download size={17} color="#22c55e" /></div>
+      <div style={S.conviteIcone}><Download size={17} color="var(--verde)" /></div>
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={S.conviteTitulo}>Instalar no aparelho</div>
         <div style={S.conviteTexto}>
@@ -1119,116 +1155,116 @@ function Tela({ children }) { return <div style={S.tela}>{children}</div>; }
 
 // ---------- estilos ----------
 const S = {
-  tela: { minHeight: "100vh", background: "#0a0e16", color: "#e2e8f0", fontFamily: "'Inter', system-ui, -apple-system, sans-serif", paddingBottom: 96 },
-  centro: { textAlign: "center", paddingTop: 140, color: "#64748b" },
+  tela: { minHeight: "100vh", background: "var(--fundo)", color: "var(--texto)", fontFamily: "'Inter', system-ui, -apple-system, sans-serif", paddingBottom: 96 },
+  centro: { textAlign: "center", paddingTop: 140, color: "var(--texto-4)" },
   wrap: { maxWidth: 720, margin: "0 auto", padding: "20px 16px 0" },
 
   loginWrap: { maxWidth: 380, margin: "0 auto", padding: "80px 20px 0" },
-  loginSub: { color: "#64748b", fontSize: 14, margin: "8px 0 28px" },
-  btnGoogle: { display: "flex", alignItems: "center", justifyContent: "center", gap: 10, width: "100%", background: "#ffffff", border: "none", borderRadius: 10, padding: "12px", color: "#1f2937", fontSize: 15, fontWeight: 600, cursor: "pointer" },
-  divisor: { display: "flex", alignItems: "center", gap: 12, margin: "20px 0 4px", color: "#475569", fontSize: 12 },
-  divisorLinha: { flex: 1, height: 1, background: "#232a38" },
-  linkBtn: { display: "block", width: "100%", textAlign: "center", background: "transparent", border: "none", color: "#38bdf8", fontSize: 14, marginTop: 16, cursor: "pointer" },
+  loginSub: { color: "var(--texto-4)", fontSize: 14, margin: "8px 0 28px" },
+  btnGoogle: { display: "flex", alignItems: "center", justifyContent: "center", gap: 10, width: "100%", background: "#ffffff", border: "1px solid var(--borda-2)", borderRadius: 10, padding: "12px", color: "#1f2937", fontSize: 15, fontWeight: 600, cursor: "pointer" },
+  divisor: { display: "flex", alignItems: "center", gap: 12, margin: "20px 0 4px", color: "var(--texto-5)", fontSize: 12 },
+  divisorLinha: { flex: 1, height: 1, background: "var(--borda)" },
+  linkBtn: { display: "block", width: "100%", textAlign: "center", background: "transparent", border: "none", color: "var(--azul)", fontSize: 14, marginTop: 16, cursor: "pointer" },
 
-  header: { display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 18 },
+  header: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, flexWrap: "wrap", marginBottom: 18 },
   marca: { display: "flex", alignItems: "center", gap: 8, fontWeight: 700, fontSize: 17, letterSpacing: "-0.01em" },
-  btnNav: { width: 34, height: 34, borderRadius: 9, border: "1px solid #232a38", background: "#161b26", color: "#cbd5e1", display: "grid", placeItems: "center", cursor: "pointer" },
+  btnNav: { width: 34, height: 34, borderRadius: 9, border: "1px solid var(--borda)", background: "var(--superficie)", color: "var(--texto-2)", display: "grid", placeItems: "center", cursor: "pointer" },
   mesLabel: { minWidth: 118, textAlign: "center", fontWeight: 600, fontSize: 15 },
 
-  heroSaldo: { border: "1px solid", borderRadius: 18, padding: "20px 22px", background: "linear-gradient(160deg,#111722,#0d1119)", marginBottom: 14 },
+  heroSaldo: { border: "1px solid", borderRadius: 18, padding: "20px 22px", background: "linear-gradient(160deg,var(--modal),var(--modal2))", marginBottom: 14 },
   heroTopo: { display: "flex", justifyContent: "space-between", alignItems: "center" },
-  heroLabel: { fontSize: 13, color: "#94a3b8", fontWeight: 500 },
-  rendaBtn: { display: "inline-flex", alignItems: "center", gap: 5, fontSize: 12, color: "#94a3b8", background: "transparent", border: "1px solid #232a38", padding: "4px 9px", borderRadius: 8, cursor: "pointer" },
+  heroLabel: { fontSize: 13, color: "var(--texto-3)", fontWeight: 500 },
+  rendaBtn: { display: "inline-flex", alignItems: "center", gap: 5, fontSize: 12, color: "var(--texto-3)", background: "transparent", border: "1px solid var(--borda)", padding: "4px 9px", borderRadius: 8, cursor: "pointer" },
   heroValor: { fontSize: 42, fontWeight: 800, letterSpacing: "-0.03em", margin: "6px 0 14px", fontVariantNumeric: "tabular-nums" },
   barraWrap: { display: "flex", flexDirection: "column", gap: 6 },
-  barra: { height: 6, background: "#1c2434", borderRadius: 99, overflow: "hidden" },
-  barraFill: { height: "100%", background: "linear-gradient(90deg,#22c55e,#4ade80)", borderRadius: 99, transition: "width .3s ease" },
-  barraTxt: { fontSize: 11.5, color: "#64748b" },
+  barra: { height: 6, background: "var(--campo-borda)", borderRadius: 99, overflow: "hidden" },
+  barraFill: { height: "100%", background: "linear-gradient(90deg,var(--verde),var(--verde-claro))", borderRadius: 99, transition: "width .3s ease" },
+  barraTxt: { fontSize: 11.5, color: "var(--texto-4)" },
 
   resumo: { display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 10, marginBottom: 22 },
-  resumoCard: { background: "#111722", border: "1px solid #1c2434", borderRadius: 12, padding: "12px 14px", display: "flex", flexDirection: "column", gap: 3 },
-  resumoLabel: { fontSize: 11.5, color: "#64748b" },
+  resumoCard: { background: "var(--modal)", border: "1px solid var(--campo-borda)", borderRadius: 12, padding: "12px 14px", display: "flex", flexDirection: "column", gap: 3 },
+  resumoLabel: { fontSize: 11.5, color: "var(--texto-4)" },
   resumoVal: { fontSize: 16, fontWeight: 700, fontVariantNumeric: "tabular-nums" },
 
   lista: { display: "flex", flexDirection: "column", gap: 20 },
-  vazio: { textAlign: "center", padding: "48px 20px", color: "#64748b", border: "1px dashed #232a38", borderRadius: 14 },
+  vazio: { textAlign: "center", padding: "48px 20px", color: "var(--texto-4)", border: "1px dashed var(--borda)", borderRadius: 14 },
   grupo: { display: "flex", flexDirection: "column", gap: 7 },
   grupoHead: { display: "flex", alignItems: "center", gap: 8, padding: "0 4px 2px" },
   dot: { width: 9, height: 9, borderRadius: 99, flexShrink: 0 },
   grupoNome: { fontWeight: 700, fontSize: 14, flex: 1, letterSpacing: "-0.01em" },
-  grupoPct: { fontSize: 11, fontWeight: 600, color: "#64748b", background: "#141a26", border: "1px solid #232a38", borderRadius: 99, padding: "1px 7px", fontVariantNumeric: "tabular-nums" },
-  grupoTotal: { fontSize: 13, color: "#94a3b8", fontWeight: 600, fontVariantNumeric: "tabular-nums" },
+  grupoPct: { fontSize: 11, fontWeight: 600, color: "var(--texto-4)", background: "var(--superficie-2)", border: "1px solid var(--borda)", borderRadius: 99, padding: "1px 7px", fontVariantNumeric: "tabular-nums" },
+  grupoTotal: { fontSize: 13, color: "var(--texto-3)", fontWeight: 600, fontVariantNumeric: "tabular-nums" },
 
   item: { display: "flex", alignItems: "center", gap: 11, padding: "11px 13px", borderRadius: 12, border: "1px solid", transition: "background .15s" },
   check: { width: 24, height: 24, borderRadius: 7, border: "2px solid", cursor: "pointer", display: "grid", placeItems: "center", flexShrink: 0, transition: "all .15s" },
   itemNome: { fontWeight: 600, fontSize: 14.5, display: "flex", alignItems: "center", gap: 7, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" },
-  parcela: { fontSize: 11, fontWeight: 700, color: "#0a0e16", background: "#94a3b8", padding: "1px 6px", borderRadius: 6, flexShrink: 0 },
-  itemSub: { fontSize: 12, color: "#64748b", marginTop: 1 },
-  itemObs: { fontSize: 12, color: "#8b6b2e", marginTop: 3, lineHeight: 1.45, overflowWrap: "anywhere" },
+  parcela: { fontSize: 11, fontWeight: 700, color: "var(--fundo)", background: "var(--texto-3)", padding: "1px 6px", borderRadius: 6, flexShrink: 0 },
+  itemSub: { fontSize: 12, color: "var(--texto-4)", marginTop: 1 },
+  itemObs: { fontSize: 12, color: "var(--ambar-texto)", marginTop: 3, lineHeight: 1.45, overflowWrap: "anywhere" },
   itemValor: { fontWeight: 700, fontSize: 14.5, fontVariantNumeric: "tabular-nums", flexShrink: 0 },
-  iconBtn: { width: 28, height: 28, borderRadius: 7, border: "none", background: "transparent", color: "#475569", cursor: "pointer", display: "grid", placeItems: "center", flexShrink: 0 },
+  iconBtn: { width: 28, height: 28, borderRadius: 7, border: "none", background: "transparent", color: "var(--texto-5)", cursor: "pointer", display: "grid", placeItems: "center", flexShrink: 0 },
 
-  fab: { position: "fixed", bottom: 20, left: "50%", transform: "translateX(-50%)", display: "inline-flex", alignItems: "center", gap: 7, background: "#22c55e", color: "#04120a", fontWeight: 700, fontSize: 15, border: "none", borderRadius: 99, padding: "13px 22px", cursor: "pointer", boxShadow: "0 8px 24px rgba(34,197,94,0.35)" },
+  fab: { position: "fixed", bottom: 20, left: "50%", transform: "translateX(-50%)", display: "inline-flex", alignItems: "center", gap: 7, background: "var(--verde)", color: "var(--sobre-verde)", fontWeight: 700, fontSize: 15, border: "none", borderRadius: 99, padding: "13px 22px", cursor: "pointer", boxShadow: "0 8px 24px rgba(34,197,94,0.35)" },
 
-  convite: { display: "flex", alignItems: "center", gap: 11, background: "#141a26", border: "1px solid #232a38", borderRadius: 12, padding: "11px 10px 11px 13px", marginBottom: 14 },
+  convite: { display: "flex", alignItems: "center", gap: 11, background: "var(--superficie-2)", border: "1px solid var(--borda)", borderRadius: 12, padding: "11px 10px 11px 13px", marginBottom: 14 },
   conviteIcone: { display: "grid", placeItems: "center", width: 34, height: 34, borderRadius: 9, background: "rgba(34,197,94,0.12)", flexShrink: 0 },
   conviteTitulo: { fontSize: 14, fontWeight: 700, letterSpacing: "-0.01em" },
-  conviteTexto: { fontSize: 12, color: "#64748b", marginTop: 2, lineHeight: 1.45 },
-  conviteBtn: { background: "#22c55e", border: "none", borderRadius: 9, padding: "8px 13px", color: "#04120a", fontSize: 13, fontWeight: 700, cursor: "pointer", flexShrink: 0 },
+  conviteTexto: { fontSize: 12, color: "var(--texto-4)", marginTop: 2, lineHeight: 1.45 },
+  conviteBtn: { background: "var(--verde)", border: "none", borderRadius: 9, padding: "8px 13px", color: "var(--sobre-verde)", fontSize: 13, fontWeight: 700, cursor: "pointer", flexShrink: 0 },
 
-  btnImportar: { display: "flex", alignItems: "center", justifyContent: "center", gap: 7, width: "100%", marginTop: -8, marginBottom: 18, background: "transparent", border: "1px dashed #232a38", borderRadius: 12, padding: "10px", color: "#64748b", fontSize: 13, fontWeight: 600, cursor: "pointer" },
-  dropZone: { display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 6, textAlign: "center", border: "1px dashed #2c3545", borderRadius: 12, padding: "30px 18px", cursor: "pointer", background: "#0f1420" },
+  btnImportar: { display: "flex", alignItems: "center", justifyContent: "center", gap: 7, width: "100%", marginTop: -8, marginBottom: 18, background: "transparent", border: "1px dashed var(--borda)", borderRadius: 12, padding: "10px", color: "var(--texto-4)", fontSize: 13, fontWeight: 600, cursor: "pointer" },
+  dropZone: { display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 6, textAlign: "center", border: "1px dashed var(--borda-2)", borderRadius: 12, padding: "30px 18px", cursor: "pointer", background: "var(--recuo)" },
   impBarra: { display: "flex", alignItems: "center", gap: 10, marginBottom: 10 },
-  impCheckLabel: { display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "#94a3b8", whiteSpace: "nowrap", cursor: "pointer" },
-  impInfo: { fontSize: 12, color: "#94a3b8", background: "#141a26", border: "1px solid #232a38", borderRadius: 9, padding: "8px 11px", marginBottom: 10 },
+  impCheckLabel: { display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "var(--texto-3)", whiteSpace: "nowrap", cursor: "pointer" },
+  impInfo: { fontSize: 12, color: "var(--texto-3)", background: "var(--superficie-2)", border: "1px solid var(--borda)", borderRadius: 9, padding: "8px 11px", marginBottom: 10 },
   impLista: { display: "flex", flexDirection: "column", gap: 7, maxHeight: "44vh", overflowY: "auto", margin: "0 -4px", padding: "0 4px" },
-  impLinha: { display: "flex", alignItems: "flex-start", gap: 10, border: "1px solid #232a38", background: "#161b26", borderRadius: 10, padding: "9px 11px" },
+  impLinha: { display: "flex", alignItems: "flex-start", gap: 10, border: "1px solid var(--borda)", background: "var(--superficie)", borderRadius: 10, padding: "9px 11px" },
   impDesc: { fontSize: 13.5, fontWeight: 600, overflowWrap: "anywhere" },
-  impMeta: { fontSize: 11, color: "#64748b", marginTop: 2 },
+  impMeta: { fontSize: 11, color: "var(--texto-4)", marginTop: 2 },
   impValor: { fontSize: 13, fontWeight: 700, fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" },
-  impResumo: { fontSize: 13, color: "#94a3b8", textAlign: "right", marginTop: 12 },
+  impResumo: { fontSize: 13, color: "var(--texto-3)", textAlign: "right", marginTop: 12 },
 
-  btnAnalise: { display: "flex", alignItems: "center", justifyContent: "center", gap: 8, width: "100%", marginBottom: 18, background: "#141a26", border: "1px solid #232a38", borderRadius: 12, padding: "11px", color: "#cbd5e1", fontSize: 14, fontWeight: 600, cursor: "pointer" },
-  selo: { fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.04em", color: "#4ade80", background: "rgba(34,197,94,0.14)", border: "1px solid rgba(34,197,94,0.35)", borderRadius: 99, padding: "1px 7px" },
-  passo: { display: "flex", alignItems: "center", gap: 8, fontSize: 13, fontWeight: 600, color: "#94a3b8", margin: "18px 0 8px" },
-  passoNum: { display: "grid", placeItems: "center", width: 19, height: 19, borderRadius: 99, background: "#232a38", color: "#cbd5e1", fontSize: 11, fontWeight: 700, flexShrink: 0 },
-  resumoBox: { width: "100%", background: "#0f1420", border: "1px solid #232a38", borderRadius: 10, padding: "10px 12px", color: "#94a3b8", fontSize: 12, lineHeight: 1.5, fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace", resize: "vertical" },
-  btnCopiar: { display: "flex", alignItems: "center", justifyContent: "center", gap: 7, width: "100%", marginTop: 8, border: "1px solid #232a38", borderRadius: 10, padding: "11px", color: "#e2e8f0", fontSize: 14, fontWeight: 600, cursor: "pointer", transition: "background 0.15s" },
+  btnAnalise: { display: "flex", alignItems: "center", justifyContent: "center", gap: 8, width: "100%", marginBottom: 18, background: "var(--superficie-2)", border: "1px solid var(--borda)", borderRadius: 12, padding: "11px", color: "var(--texto-2)", fontSize: 14, fontWeight: 600, cursor: "pointer" },
+  selo: { fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.04em", color: "var(--verde-claro)", background: "rgba(34,197,94,0.14)", border: "1px solid rgba(34,197,94,0.35)", borderRadius: 99, padding: "1px 7px" },
+  passo: { display: "flex", alignItems: "center", gap: 8, fontSize: 13, fontWeight: 600, color: "var(--texto-3)", margin: "18px 0 8px" },
+  passoNum: { display: "grid", placeItems: "center", width: 19, height: 19, borderRadius: 99, background: "var(--borda)", color: "var(--texto-2)", fontSize: 11, fontWeight: 700, flexShrink: 0 },
+  resumoBox: { width: "100%", background: "var(--recuo)", border: "1px solid var(--borda)", borderRadius: 10, padding: "10px 12px", color: "var(--texto-3)", fontSize: 12, lineHeight: 1.5, fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace", resize: "vertical" },
+  btnCopiar: { display: "flex", alignItems: "center", justifyContent: "center", gap: 7, width: "100%", marginTop: 8, border: "1px solid var(--borda)", borderRadius: 10, padding: "11px", color: "var(--texto)", fontSize: 14, fontWeight: 600, cursor: "pointer", transition: "background 0.15s" },
   btnClaude: { display: "flex", alignItems: "center", justifyContent: "center", gap: 7, width: "100%", background: "#c96442", border: "none", borderRadius: 10, padding: "11px", color: "#fff", fontSize: 14, fontWeight: 600, textDecoration: "none", cursor: "pointer" },
-  analiseBox: { background: "#0f1420", border: "1px solid #232a38", borderRadius: 10, padding: "12px 14px", color: "#cbd5e1", fontSize: 13.5, lineHeight: 1.6, whiteSpace: "pre-wrap", maxHeight: "50vh", overflowY: "auto" },
+  analiseBox: { background: "var(--recuo)", border: "1px solid var(--borda)", borderRadius: 10, padding: "12px 14px", color: "var(--texto-2)", fontSize: 13.5, lineHeight: 1.6, whiteSpace: "pre-wrap", maxHeight: "50vh", overflowY: "auto" },
 
   catLista: { display: "flex", flexDirection: "column", gap: 8, maxHeight: "50vh", overflowY: "auto", margin: "0 -4px", padding: "0 4px" },
-  catLinha: { border: "1px solid #232a38", borderRadius: 11, padding: "10px 8px 10px 12px", background: "#161b26" },
+  catLinha: { border: "1px solid var(--borda)", borderRadius: 11, padding: "10px 8px 10px 12px", background: "var(--superficie)" },
   catTopo: { display: "flex", alignItems: "center", gap: 9 },
   catNome: { flex: 1, minWidth: 0, fontSize: 15, fontWeight: 600 },
   catChips: { display: "flex", flexWrap: "wrap", gap: 6, marginTop: 9, paddingLeft: 18 },
-  catChip: { display: "inline-flex", alignItems: "center", gap: 4, fontSize: 12, color: "#94a3b8", background: "#0f1420", border: "1px solid #232a38", borderRadius: 99, padding: "3px 4px 3px 10px" },
-  catChipX: { display: "grid", placeItems: "center", width: 17, height: 17, borderRadius: 99, border: "none", background: "transparent", color: "#64748b", cursor: "pointer" },
-  catVazio: { fontSize: 13, color: "#64748b", border: "1px dashed #232a38", borderRadius: 11, padding: "18px 14px", textAlign: "center" },
+  catChip: { display: "inline-flex", alignItems: "center", gap: 4, fontSize: 12, color: "var(--texto-3)", background: "var(--recuo)", border: "1px solid var(--borda)", borderRadius: 99, padding: "3px 4px 3px 10px" },
+  catChipX: { display: "grid", placeItems: "center", width: 17, height: 17, borderRadius: 99, border: "none", background: "transparent", color: "var(--texto-4)", cursor: "pointer" },
+  catVazio: { fontSize: 13, color: "var(--texto-4)", border: "1px dashed var(--borda)", borderRadius: 11, padding: "18px 14px", textAlign: "center" },
 
-  overlay: { position: "fixed", inset: 0, background: "rgba(4,7,12,0.7)", backdropFilter: "blur(4px)", display: "grid", placeItems: "center", padding: 16, zIndex: 50 },
-  modal: { position: "relative", width: "100%", maxWidth: 420, maxHeight: "90vh", overflowY: "auto", background: "#0f1420", border: "1px solid #232a38", borderRadius: 18, padding: "24px 22px" },
-  fechar: { position: "absolute", top: 14, right: 14, width: 32, height: 32, borderRadius: 8, border: "none", background: "#1a2130", color: "#94a3b8", cursor: "pointer", display: "grid", placeItems: "center" },
+  overlay: { position: "fixed", inset: 0, background: "var(--sombra)", backdropFilter: "blur(4px)", display: "grid", placeItems: "center", padding: 16, zIndex: 50 },
+  modal: { position: "relative", width: "100%", maxWidth: 420, maxHeight: "90vh", overflowY: "auto", background: "var(--recuo)", border: "1px solid var(--borda)", borderRadius: 18, padding: "24px 22px" },
+  fechar: { position: "absolute", top: 14, right: 14, width: 32, height: 32, borderRadius: 8, border: "none", background: "var(--campo)", color: "var(--texto-3)", cursor: "pointer", display: "grid", placeItems: "center" },
   modalTitulo: { margin: "0 0 4px", fontSize: 19, fontWeight: 700, letterSpacing: "-0.02em" },
-  modalAjuda: { margin: "0 0 16px", fontSize: 13, color: "#64748b" },
+  modalAjuda: { margin: "0 0 16px", fontSize: 13, color: "var(--texto-4)" },
 
-  label: { display: "block", fontSize: 12.5, fontWeight: 600, color: "#94a3b8", margin: "14px 0 6px" },
-  input: { width: "100%", boxSizing: "border-box", background: "#161b26", border: "1px solid #232a38", borderRadius: 10, padding: "11px 13px", color: "#e2e8f0", fontSize: 15, outline: "none" },
-  select: { flex: 1, background: "#161b26", border: "1px solid #232a38", borderRadius: 10, padding: "11px 13px", color: "#e2e8f0", fontSize: 15, outline: "none", cursor: "pointer" },
+  label: { display: "block", fontSize: 12.5, fontWeight: 600, color: "var(--texto-3)", margin: "14px 0 6px" },
+  input: { width: "100%", boxSizing: "border-box", background: "var(--superficie)", border: "1px solid var(--borda)", borderRadius: 10, padding: "11px 13px", color: "var(--texto)", fontSize: 15, outline: "none" },
+  select: { flex: 1, background: "var(--superficie)", border: "1px solid var(--borda)", borderRadius: 10, padding: "11px 13px", color: "var(--texto)", fontSize: 15, outline: "none", cursor: "pointer" },
   linhaSelect: { display: "flex", gap: 8 },
-  btnMini: { flexShrink: 0, background: "#1a2130", border: "1px solid #232a38", borderRadius: 10, padding: "0 14px", color: "#cbd5e1", fontSize: 13, fontWeight: 600, cursor: "pointer" },
+  btnMini: { flexShrink: 0, background: "var(--campo)", border: "1px solid var(--borda)", borderRadius: 10, padding: "0 14px", color: "var(--texto-2)", fontSize: 13, fontWeight: 600, cursor: "pointer" },
 
   parcelasRow: { display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" },
-  stepBtn: { width: 40, height: 40, borderRadius: 10, border: "1px solid #232a38", background: "#161b26", color: "#e2e8f0", fontSize: 22, cursor: "pointer", lineHeight: 1 },
+  stepBtn: { width: 40, height: 40, borderRadius: 10, border: "1px solid var(--borda)", background: "var(--superficie)", color: "var(--texto)", fontSize: 22, cursor: "pointer", lineHeight: 1 },
   parcelasNum: { minWidth: 48, textAlign: "center", fontSize: 18, fontWeight: 700, fontVariantNumeric: "tabular-nums" },
-  parcelasInfo: { fontSize: 12, color: "#64748b", flexBasis: "100%", marginTop: 8, lineHeight: 1.5 },
-  avisoSerie: { fontSize: 12, lineHeight: 1.55, color: "#fbbf24", background: "rgba(251,191,36,0.08)", border: "1px solid rgba(251,191,36,0.25)", borderRadius: 10, padding: "9px 11px", marginTop: 18 },
-  segmento: { display: "flex", gap: 6, marginTop: 10, background: "#0f1420", border: "1px solid #232a38", borderRadius: 10, padding: 3 },
-  segBtn: { flex: 1, background: "transparent", border: "none", borderRadius: 8, padding: "8px 6px", color: "#64748b", fontSize: 13, fontWeight: 600, cursor: "pointer" },
-  segAtivo: { background: "#232a38", color: "#e2e8f0" },
+  parcelasInfo: { fontSize: 12, color: "var(--texto-4)", flexBasis: "100%", marginTop: 8, lineHeight: 1.5 },
+  avisoSerie: { fontSize: 12, lineHeight: 1.55, color: "var(--ambar)", background: "rgba(251,191,36,0.08)", border: "1px solid rgba(251,191,36,0.25)", borderRadius: 10, padding: "9px 11px", marginTop: 18 },
+  segmento: { display: "flex", gap: 6, marginTop: 10, background: "var(--recuo)", border: "1px solid var(--borda)", borderRadius: 10, padding: 3 },
+  segBtn: { flex: 1, background: "transparent", border: "none", borderRadius: 8, padding: "8px 6px", color: "var(--texto-4)", fontSize: 13, fontWeight: 600, cursor: "pointer" },
+  segAtivo: { background: "var(--borda)", color: "var(--texto)" },
 
-  erro: { display: "flex", alignItems: "center", gap: 6, color: "#f87171", fontSize: 13, marginTop: 14 },
+  erro: { display: "flex", alignItems: "center", gap: 6, color: "var(--vermelho)", fontSize: 13, marginTop: 14 },
   modalAcoes: { display: "flex", gap: 10, marginTop: 22 },
-  btnSec: { flex: 1, background: "transparent", border: "1px solid #232a38", borderRadius: 10, padding: "12px", color: "#cbd5e1", fontSize: 15, fontWeight: 600, cursor: "pointer" },
-  btnPri: { flex: 1, background: "#22c55e", border: "none", borderRadius: 10, padding: "12px", color: "#04120a", fontSize: 15, fontWeight: 700, cursor: "pointer" },
+  btnSec: { flex: 1, background: "transparent", border: "1px solid var(--borda)", borderRadius: 10, padding: "12px", color: "var(--texto-2)", fontSize: 15, fontWeight: 600, cursor: "pointer" },
+  btnPri: { flex: 1, background: "var(--verde)", border: "none", borderRadius: 10, padding: "12px", color: "var(--sobre-verde)", fontSize: 15, fontWeight: 700, cursor: "pointer" },
 };

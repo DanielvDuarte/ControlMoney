@@ -279,6 +279,26 @@ O `background_color` do manifest é o navy do ícone (a tela de abertura fica
 coerente com ele), e o `theme_color` segue o `#0a0e16` do app, para a barra de
 status não mudar de cor quando o app termina de carregar.
 
+## Temas claro e escuro
+
+As cores não ficam mais espalhadas pelo `S` do [src/App.jsx](src/App.jsx): são
+variáveis CSS declaradas em [index.html](index.html), num bloco por tema.
+Trocar de tema é só mudar `data-tema` na tag `<html>` — o navegador repinta
+tudo sozinho, sem re-render do React e sem recarregar a página.
+
+Mexendo nas cores, **mexa no index.html**, não no componente. Os estilos usam
+`var(--nome)`; um hex solto no `S` vira uma cor que não acompanha o tema.
+
+Ficaram fixas de propósito as cores de marca: a paleta `CORES_CAT` das
+categorias, as quatro cores do logo do Google e o laranja do botão do Claude.
+Elas são as mesmas nos dois temas — o botão branco do Google ganhou uma borda
+justamente porque, no tema claro, sumiria contra o fundo.
+
+O tema salvo é aplicado por um script inline no `<head>`, **antes** da primeira
+pintura. Se ficasse só no React, quem escolheu o tema claro veria um lampejo
+escuro a cada abertura. O mesmo handler atualiza a meta `theme-color`, para a
+barra do navegador no celular acompanhar.
+
 ## Rotina de manutenção
 
 **Alterar o app:** edite, `git push`, e o deploy sai sozinho em ~1 minuto.
