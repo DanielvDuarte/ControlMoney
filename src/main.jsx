@@ -17,6 +17,17 @@ apple.rel = "apple-touch-icon";
 apple.href = base + "icone-apple.png";
 document.head.appendChild(apple);
 
+// O Chrome costuma emitir `beforeinstallprompt` durante o carregamento —
+// antes do React montar. Se só o componente escutasse, o evento passaria
+// direto e o botão automático nunca apareceria. Guardamos aqui, o mais cedo
+// possível, e avisamos a interface quando ela já estiver de pé.
+window.__promptInstalar = null;
+window.addEventListener("beforeinstallprompt", (e) => {
+  e.preventDefault();
+  window.__promptInstalar = e;
+  window.dispatchEvent(new Event("prompt-instalar-pronto"));
+});
+
 if ("serviceWorker" in navigator) {
   window.addEventListener("load", () => {
     navigator.serviceWorker.register(base + "sw.js", { scope: base }).catch(() => {

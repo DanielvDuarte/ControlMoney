@@ -1068,12 +1068,19 @@ function ConviteInstalar() {
 
     setVisivel(true);
 
+    // O evento pode ter chegado antes deste componente existir — main.jsx o
+    // guarda em window.__promptInstalar justamente para este caso.
+    if (window.__promptInstalar) setEvento(window.__promptInstalar);
+
     const aoPoderInstalar = (e) => { e.preventDefault(); setEvento(e); };
-    const aoInstalar = () => { setEvento(null); setVisivel(false); };
+    const aoGuardado = () => setEvento(window.__promptInstalar);
+    const aoInstalar = () => { window.__promptInstalar = null; setEvento(null); setVisivel(false); };
     window.addEventListener("beforeinstallprompt", aoPoderInstalar);
+    window.addEventListener("prompt-instalar-pronto", aoGuardado);
     window.addEventListener("appinstalled", aoInstalar);
     return () => {
       window.removeEventListener("beforeinstallprompt", aoPoderInstalar);
+      window.removeEventListener("prompt-instalar-pronto", aoGuardado);
       window.removeEventListener("appinstalled", aoInstalar);
     };
   }, []);
@@ -1087,6 +1094,7 @@ function ConviteInstalar() {
     if (!evento) return;
     evento.prompt();
     await evento.userChoice;   // aceitando ou não, não insistimos de novo
+    window.__promptInstalar = null;   // o evento só pode ser usado uma vez
     dispensar();
   };
 

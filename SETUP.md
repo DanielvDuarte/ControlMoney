@@ -245,14 +245,21 @@ assim não dependem de como o Vite reescreve (ou não) `href` no HTML.
 O convite em si é o componente `ConviteInstalar`, renderizado **na tela de
 login e no painel** — quem ainda não entrou também precisa vê-lo.
 
-Ele aparece sempre, e o botão automático é um bônus, não a condição. Essa
-distinção importa: `beforeinstallprompt` é um evento pouco confiável — o
-Chrome só o emite depois de algum engajamento com a página (às vezes exige uma
-segunda visita) e o Firefox nunca o emite. A primeira versão deste componente
-dependia só dele e, quando não disparava, não mostrava nada: silêncio total,
-indistinguível de um bug. Agora, sem o evento, o convite mostra a instrução
-manual do navegador em uso (`dicaInstalacao()`): menu ⋮ no Android, botão
-Compartilhar no iPhone, ícone da barra de endereço no computador.
+Ele aparece sempre, e o botão automático é um bônus, não a condição. Sem o
+evento, o convite mostra a instrução manual do navegador em uso
+(`dicaInstalacao()`): menu ⋮ no Android, botão Compartilhar no iPhone, ícone
+da barra de endereço no computador. O Firefox nunca oferece instalação.
+
+**A armadilha do `beforeinstallprompt`:** ele costuma disparar durante o
+carregamento da página, **antes do React montar**. Um listener registrado
+dentro do componente chega tarde e perde o evento para sempre naquela visita —
+o sintoma é o convite aparecer sempre no modo manual, como se o navegador não
+suportasse instalação. Por isso o listener de verdade fica em
+[src/main.jsx](src/main.jsx), antes do `createRoot`: ele guarda o evento em
+`window.__promptInstalar` e emite um `prompt-instalar-pronto`. O componente lê
+a variável ao montar e também escuta esse aviso, cobrindo as duas ordens
+possíveis. O evento só pode ser consumido uma vez, então é zerado depois do
+`prompt()`.
 
 Ele some para sempre em três casos: o app já está instalado
 (`display-mode: standalone`), a pessoa instalou (`appinstalled`), ou a pessoa
@@ -265,6 +272,7 @@ navegador, na página publicada:
 ```js
 matchMedia("(display-mode: standalone)").matches   // true = já instalado
 localStorage.getItem("convite-instalar-dispensado") // "1" = dispensado antes
+window.__promptInstalar                             // null = o navegador não ofereceu
 ```
 
 O `background_color` do manifest é o navy do ícone (a tela de abertura fica
