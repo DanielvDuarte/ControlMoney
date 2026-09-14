@@ -18,6 +18,10 @@ No ar em **https://danielvduarte.github.io/ControlMoney/**
   (aluguel, assinatura) ou **dividir** um total em N parcelas (compra em 3x) —
   aí a última parcela absorve a sobra dos centavos.
 - Marcar como pago (fica verde); resumo de pago / falta pagar.
+- Observação livre por gasto ("negociado até dezembro", "conferir reajuste"),
+  que aparece na lista e vai junto no resumo levado ao Claude.
+- Editar um gasto parcelado corrige a série inteira — dá para consertar
+  "esqueci que eram 5x" ou "digitei o total" sem apagar e refazer.
 - Renda por mês, com o saldo (sobra) calculado em cima dela.
 - Quanto cada categoria consumiu da renda, em porcentagem (aparece quando há
   renda informada no mês).
@@ -113,9 +117,15 @@ Configure uma vez, no repositório (github.com/DanielvDuarte/ControlMoney):
 > são protegidos pelo RLS. Se preferir manter o repo privado, o Cloudflare Pages
 > publica repositório privado de graça — veja o apêndice no fim.
 
-### Instalar como app no celular
-Abra o link no navegador do celular e use "Adicionar à tela de início" — ele
-abre em tela cheia, como um app.
+### Instalar como app
+O projeto é um PWA: na primeira visita aparece um convite para instalar.
+No Chrome/Edge (celular e computador) o botão **Instalar** resolve em um toque.
+No iPhone, o convite ensina o caminho — **Compartilhar → Adicionar à Tela de
+Início** —, porque o Safari não expõe instalação automática. Depois de
+instalado, ou se a pessoa dispensar, o convite não volta a aparecer.
+
+Os arquivos do PWA ficam em `public/` (manifest, service worker e ícones) e são
+registrados em `src/main.jsx`, que monta os caminhos a partir do `BASE_URL`.
 
 ## 3. Rodar localmente (opcional)
 
@@ -139,6 +149,8 @@ index.html
 vite.config.js                  base do Pages fica aqui
 .env.example
 .github/workflows/deploy.yml    build + deploy automático
+public/                         manifest, service worker e ícones do PWA
+arte/                           logo original e o script que gera os ícones
 src/
   main.jsx                      ponto de entrada do React
   App.jsx                       app inteiro (login + painel + modais)
@@ -150,8 +162,9 @@ src/
 - `categorias(id, user_id, nome, cor, subs[])` — subcategorias ficam no array `subs`.
 - `meses(id, user_id, mes 'YYYY-MM', renda)` — uma linha por mês, guarda a renda.
 - `gastos(id, user_id, mes, nome, valor, categoria_id, subcategoria, pago,
-  grupo_parcela, parcela_atual, total_parcelas, fitid)` — parcelas compartilham
-  `grupo_parcela`; `fitid` é o id da transação no OFX, usado para não importar duas vezes.
+  grupo_parcela, parcela_atual, total_parcelas, fitid, observacao)` — parcelas
+  compartilham `grupo_parcela`; `fitid` é o id da transação no OFX, usado para
+  não importar duas vezes.
 - `analises(id, user_id, mes, texto)` — a análise que você colou de volta do
   Claude, uma por mês.
 

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
-import { Plus, Check, Trash2, ChevronLeft, ChevronRight, X, Pencil, AlertCircle, Wallet, LogOut, Tags, Sparkles, Copy, ExternalLink, Upload } from "lucide-react";
+import { Plus, Check, Trash2, ChevronLeft, ChevronRight, X, Pencil, AlertCircle, Wallet, LogOut, Tags, Sparkles, Copy, ExternalLink, Upload, Download, Share } from "lucide-react";
 import { supabase } from "./lib/supabase";
 
 // ---------- helpers ----------
@@ -96,6 +96,7 @@ function montarResumo({ mesKey, renda, gastos, catPorId, historico }) {
       if (g.subcategoria) partes.push(`(${g.subcategoria})`);
       if (g.total_parcelas > 1) partes.push(`— parcela ${g.parcela_atual}/${g.total_parcelas}`);
       L.push(`- ${partes.join(" ")}: ${brl(g.valor)}${g.pago ? " [pago]" : " [em aberto]"}`);
+      if (g.observacao) L.push(`  obs: ${g.observacao}`);
     });
     L.push("");
   });
@@ -252,6 +253,7 @@ function Painel({ usuario }) {
   const [modalCategorias, setModalCategorias] = useState(false);
   const [modalAnalise, setModalAnalise] = useState(false);
   const [modalImportar, setModalImportar] = useState(false);
+  const [erroGlobal, setErroGlobal] = useState("");
   const [analise, setAnalise] = useState(null);   // texto colado de volta do Claude
   const [resumo, setResumo] = useState("");       // texto a levar para o Claude
   const { y, m } = parseKey(mesAtual);
@@ -382,18 +384,47 @@ function Painel({ usuario }) {
   };
 
   const salvarGasto = async (form) => {
-    const { nome, valor, valorUltima, categoria, subcategoria, parcelas } = form;
+    const { nome, valor, valorUltima, categoria, subcategoria, observacao, parcelas } = form;
     const cat = await garantirCategoria(categoria);
     if (subcategoria) await registrarSub(cat, subcategoria);
 
+    const n = Math.max(1, Number(parcelas) || 1);
+
+    // Editar um gasto parcelado reescreve a série inteira, a partir do mês da
+    // primeira parcela. É o que permite corrigir "esqueci que eram 5x" ou
+    // "digitei o total em vez do valor mensal" sem apagar e refazer.
     if (editando) {
-      await supabase.from("gastos").update({
-        nome, valor: Number(valor), categoria_id: cat.id, subcategoria: subcategoria || "",
-      }).eq("id", editando.id);
+      let existentes = [editando];
+      if (editando.grupo_parcela) {
+        const { data } = await supabase.from("gastos").select("*").eq("grupo_parcela", editando.grupo_parcela);
+        if (data?.length) existentes = data;
+      }
+      const mesInicial = existentes.reduce((min, g) => (g.mes < min ? g.mes : min), existentes[0].mes);
+      const pagoPorIndice = {};
+      existentes.forEach(g => { pagoPorIndice[(g.parcela_atual || 1) - 1] = g.pago; });
+      const fitid = existentes.find(g => g.fitid)?.fitid || null;
+      const grupoId = n > 1 ? (editando.grupo_parcela || crypto.randomUUID()) : null;
+
+      const novas = Array.from({ length: n }, (_, i) => ({
+        user_id: usuario.id,
+        mes: addMeses(mesInicial, i),
+        nome,
+        valor: i === n - 1 ? Number(valorUltima ?? valor) : Number(valor),
+        categoria_id: cat.id, subcategoria: subcategoria || "", observacao: observacao || "",
+        pago: pagoPorIndice[i] ?? false,
+        grupo_parcela: grupoId,
+        parcela_atual: n > 1 ? i + 1 : null,
+        total_parcelas: n > 1 ? n : null,
+        fitid: i === 0 ? fitid : null,
+      }));
+
+      // Insere antes de apagar: se algo falhar, nada é perdido.
+      const { error } = await supabase.from("gastos").insert(novas);
+      if (error) { setErroGlobal("Não consegui salvar: " + error.message); return; }
+      await supabase.from("gastos").delete().in("id", existentes.map(g => g.id));
       fechar(); carregarMes(mesAtual); return;
     }
 
-    const n = Math.max(1, Number(parcelas) || 1);
     const grupo = n > 1 ? crypto.randomUUID() : null;
     const linhas = Array.from({ length: n }, (_, i) => ({
       user_id: usuario.id,
@@ -401,7 +432,7 @@ function Painel({ usuario }) {
       nome,
       // Na divisão, a última parcela absorve a sobra dos centavos.
       valor: i === n - 1 ? Number(valorUltima ?? valor) : Number(valor),
-      categoria_id: cat.id, subcategoria: subcategoria || "",
+      categoria_id: cat.id, subcategoria: subcategoria || "", observacao: observacao || "",
       pago: false, grupo_parcela: grupo,
       parcela_atual: n > 1 ? i + 1 : null,
       total_parcelas: n > 1 ? n : null,
@@ -479,7 +510,7 @@ function Painel({ usuario }) {
   };
 
   const abrirNovo = () => { setEditando(null); setModalGasto(true); };
-  const abrirEdicao = (g) => { setEditando({ ...g, categoriaNome: catPorId[g.categoria_id]?.nome }); setModalGasto(true); };
+  const abrirEdicao = (g) => { setErroGlobal(""); setEditando({ ...g, categoriaNome: catPorId[g.categoria_id]?.nome }); setModalGasto(true); };
   const fechar = () => { setModalGasto(false); setEditando(null); };
 
   const saldoNeg = totais.saldo < 0;
@@ -522,6 +553,8 @@ function Painel({ usuario }) {
           {analise && <span style={S.selo}>salva</span>}
         </button>
 
+        <ConviteInstalar />
+
         <button style={S.btnImportar} onClick={() => setModalImportar(true)}>
           <Upload size={14} /> Importar extrato do banco (OFX)
         </button>
@@ -557,6 +590,7 @@ function Painel({ usuario }) {
                       <div style={{ flex: 1, minWidth: 0 }}>
                         <div style={S.itemNome}>{g.nome}{g.total_parcelas > 1 && <span style={S.parcela}>{g.parcela_atual}/{g.total_parcelas}</span>}</div>
                         {g.subcategoria && <div style={S.itemSub}>{g.subcategoria}</div>}
+                        {g.observacao && <div style={S.itemObs}>{g.observacao}</div>}
                       </div>
                       <div style={{ ...S.itemValor, color: g.pago ? "#4ade80" : "#e2e8f0" }}>{brl(g.valor)}</div>
                       <button style={S.iconBtn} onClick={() => abrirEdicao(g)} aria-label="Editar"><Pencil size={14} /></button>
@@ -572,7 +606,7 @@ function Painel({ usuario }) {
 
       <button style={S.fab} onClick={abrirNovo}><Plus size={20} strokeWidth={2.5} /> Novo gasto</button>
 
-      {modalGasto && <ModalGasto categorias={categorias} editando={editando} onFechar={fechar} onSalvar={salvarGasto} />}
+      {modalGasto && <ModalGasto categorias={categorias} editando={editando} erroExterno={erroGlobal} onFechar={fechar} onSalvar={salvarGasto} />}
       {editRenda && <ModalRenda valor={renda} onFechar={() => setEditRenda(false)} onSalvar={definirRenda} />}
       {modalCategorias && <ModalCategorias categorias={categorias} onFechar={() => setModalCategorias(false)}
         onRemoverCat={removerCategoria} onRemoverSub={removerSub} />}
@@ -847,7 +881,7 @@ function ModalCategorias({ categorias, onFechar, onRemoverCat, onRemoverSub }) {
   );
 }
 
-function ModalGasto({ categorias, editando, onFechar, onSalvar }) {
+function ModalGasto({ categorias, editando, erroExterno, onFechar, onSalvar }) {
   const nomes = categorias.map(c => c.nome);
   const [nome, setNome] = useState(editando?.nome || "");
   const [valor, setValor] = useState(editando?.valor ?? "");
@@ -857,7 +891,8 @@ function ModalGasto({ categorias, editando, onFechar, onSalvar }) {
   const [subcategoria, setSubcategoria] = useState(editando?.subcategoria || "");
   const [criandoSub, setCriandoSub] = useState(false);
   const [novaSub, setNovaSub] = useState("");
-  const [parcelas, setParcelas] = useState(1);
+  const [observacao, setObservacao] = useState(editando?.observacao || "");
+  const [parcelas, setParcelas] = useState(editando?.total_parcelas || 1);
   const [modo, setModo] = useState("repetir");   // repetir | dividir
   const [erro, setErro] = useState("");
 
@@ -868,6 +903,8 @@ function ModalGasto({ categorias, editando, onFechar, onSalvar }) {
   // "dividir" = o valor digitado é o total, rateado entre as parcelas (compra em Nx).
   const n = Math.max(1, Number(parcelas) || 1);
   const bruto = Number(valor) || 0;
+  const serie = editando?.total_parcelas > 1;
+  const mesInicial = serie ? addMeses(editando.mes, -((editando.parcela_atual || 1) - 1)) : null;
   const porMes = modo === "dividir" && n > 1 ? Math.floor((bruto / n) * 100) / 100 : bruto;
   // A sobra de centavos do arredondamento vai toda na última parcela.
   const ultima = modo === "dividir" && n > 1 ? Number((bruto - porMes * (n - 1)).toFixed(2)) : porMes;
@@ -879,6 +916,7 @@ function ModalGasto({ categorias, editando, onFechar, onSalvar }) {
     onSalvar({
       nome: nome.trim(), categoria: catFinal,
       subcategoria: criandoSub ? novaSub.trim() : subcategoria,
+      observacao: observacao.trim(),
       valor: porMes, valorUltima: ultima, parcelas,
     });
   };
@@ -891,7 +929,7 @@ function ModalGasto({ categorias, editando, onFechar, onSalvar }) {
       <input autoFocus style={S.input} value={nome} onChange={e => setNome(e.target.value)} placeholder="Ex: Aluguel, Internet, Switch…" />
 
       <label style={S.label}>
-        Valor {parcelas > 1 && !editando ? (modo === "dividir" ? "(total da compra)" : "(de cada mês)") : ""}
+        Valor {parcelas > 1 ? (modo === "dividir" ? "(total da compra)" : "(de cada mês)") : ""}
       </label>
       <input type="number" inputMode="decimal" style={S.input} value={valor} onChange={e => setValor(e.target.value)} placeholder="0,00" />
 
@@ -926,7 +964,11 @@ function ModalGasto({ categorias, editando, onFechar, onSalvar }) {
         </div>
       )}
 
-      {!editando && (
+      <label style={S.label}>Observação <span style={{ color: "#64748b", fontWeight: 400 }}>(opcional)</span></label>
+      <textarea style={{ ...S.input, minHeight: 62, resize: "vertical" }} value={observacao}
+        onChange={e => setObservacao(e.target.value)} placeholder="Ex: negociado até dezembro, conferir reajuste…" />
+
+      {(
         <>
           <label style={S.label}>Parcelas</label>
           <div style={S.parcelasRow}>
@@ -955,7 +997,15 @@ function ModalGasto({ categorias, editando, onFechar, onSalvar }) {
         </>
       )}
 
-      {erro && <div style={S.erro}><AlertCircle size={14} /> {erro}</div>}
+      {serie && (
+        <div style={S.avisoSerie}>
+          Este gasto faz parte de uma série ({editando.parcela_atual}/{editando.total_parcelas}).
+          O que você salvar vale para <b>todas as parcelas</b>, recontadas a partir de{" "}
+          {MESES[parseKey(mesInicial).m]}/{parseKey(mesInicial).y}. As já marcadas como pagas continuam pagas.
+        </div>
+      )}
+
+      {(erro || erroExterno) && <div style={S.erro}><AlertCircle size={14} /> {erro || erroExterno}</div>}
       <div style={S.modalAcoes}>
         <button style={S.btnSec} onClick={onFechar}>Cancelar</button>
         <button style={S.btnPri} onClick={submeter}>{editando ? "Salvar" : "Adicionar"}</button>
@@ -976,6 +1026,71 @@ function Overlay({ children, onFechar }) {
         <button style={S.fechar} onClick={onFechar} aria-label="Fechar"><X size={18} /></button>
         {children}
       </div>
+    </div>
+  );
+}
+
+// ============================================================
+//  Convite para instalar (PWA)
+//  No Chrome/Edge/Android o próprio navegador avisa que dá para instalar, e a
+//  gente guarda esse aviso para disparar no nosso botão. No iPhone não existe
+//  esse evento — lá só resta ensinar o caminho do menu Compartilhar.
+// ============================================================
+const CHAVE_DISPENSA = "convite-instalar-dispensado";
+
+function ConviteInstalar() {
+  const [evento, setEvento] = useState(null);
+  const [iosVisivel, setIosVisivel] = useState(false);
+
+  useEffect(() => {
+    // Já instalado (aberto pelo atalho): nunca convida.
+    const instalado = window.matchMedia("(display-mode: standalone)").matches || window.navigator.standalone === true;
+    let dispensado = false;
+    try { dispensado = localStorage.getItem(CHAVE_DISPENSA) === "1"; } catch { /* modo privativo */ }
+    if (instalado || dispensado) return;
+
+    const aoPoderInstalar = (e) => { e.preventDefault(); setEvento(e); };
+    const aoInstalar = () => { setEvento(null); setIosVisivel(false); };
+    window.addEventListener("beforeinstallprompt", aoPoderInstalar);
+    window.addEventListener("appinstalled", aoInstalar);
+
+    const ios = /iphone|ipad|ipod/i.test(navigator.userAgent);
+    const safari = !/crios|fxios|edgios/i.test(navigator.userAgent);
+    if (ios && safari) setIosVisivel(true);
+
+    return () => {
+      window.removeEventListener("beforeinstallprompt", aoPoderInstalar);
+      window.removeEventListener("appinstalled", aoInstalar);
+    };
+  }, []);
+
+  const dispensar = () => {
+    try { localStorage.setItem(CHAVE_DISPENSA, "1"); } catch { /* ignora */ }
+    setEvento(null); setIosVisivel(false);
+  };
+
+  const instalar = async () => {
+    if (!evento) return;
+    evento.prompt();
+    await evento.userChoice;   // aceitando ou não, não insistimos de novo
+    dispensar();
+  };
+
+  if (!evento && !iosVisivel) return null;
+
+  return (
+    <div style={S.convite}>
+      <div style={S.conviteIcone}><Download size={17} color="#22c55e" /></div>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={S.conviteTitulo}>Instalar no aparelho</div>
+        <div style={S.conviteTexto}>
+          {evento
+            ? "Cria um atalho e abre em tela cheia, como um aplicativo."
+            : <>Toque em <Share size={12} style={{ verticalAlign: "-2px" }} /> e depois em <b>Adicionar à Tela de Início</b>.</>}
+        </div>
+      </div>
+      {evento && <button style={S.conviteBtn} onClick={instalar}>Instalar</button>}
+      <button style={S.iconBtn} onClick={dispensar} aria-label="Dispensar"><X size={16} /></button>
     </div>
   );
 }
@@ -1029,10 +1144,17 @@ const S = {
   itemNome: { fontWeight: 600, fontSize: 14.5, display: "flex", alignItems: "center", gap: 7, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" },
   parcela: { fontSize: 11, fontWeight: 700, color: "#0a0e16", background: "#94a3b8", padding: "1px 6px", borderRadius: 6, flexShrink: 0 },
   itemSub: { fontSize: 12, color: "#64748b", marginTop: 1 },
+  itemObs: { fontSize: 12, color: "#8b6b2e", marginTop: 3, lineHeight: 1.45, overflowWrap: "anywhere" },
   itemValor: { fontWeight: 700, fontSize: 14.5, fontVariantNumeric: "tabular-nums", flexShrink: 0 },
   iconBtn: { width: 28, height: 28, borderRadius: 7, border: "none", background: "transparent", color: "#475569", cursor: "pointer", display: "grid", placeItems: "center", flexShrink: 0 },
 
   fab: { position: "fixed", bottom: 20, left: "50%", transform: "translateX(-50%)", display: "inline-flex", alignItems: "center", gap: 7, background: "#22c55e", color: "#04120a", fontWeight: 700, fontSize: 15, border: "none", borderRadius: 99, padding: "13px 22px", cursor: "pointer", boxShadow: "0 8px 24px rgba(34,197,94,0.35)" },
+
+  convite: { display: "flex", alignItems: "center", gap: 11, background: "#141a26", border: "1px solid #232a38", borderRadius: 12, padding: "11px 10px 11px 13px", marginBottom: 14 },
+  conviteIcone: { display: "grid", placeItems: "center", width: 34, height: 34, borderRadius: 9, background: "rgba(34,197,94,0.12)", flexShrink: 0 },
+  conviteTitulo: { fontSize: 14, fontWeight: 700, letterSpacing: "-0.01em" },
+  conviteTexto: { fontSize: 12, color: "#64748b", marginTop: 2, lineHeight: 1.45 },
+  conviteBtn: { background: "#22c55e", border: "none", borderRadius: 9, padding: "8px 13px", color: "#04120a", fontSize: 13, fontWeight: 700, cursor: "pointer", flexShrink: 0 },
 
   btnImportar: { display: "flex", alignItems: "center", justifyContent: "center", gap: 7, width: "100%", marginTop: -8, marginBottom: 18, background: "transparent", border: "1px dashed #232a38", borderRadius: 12, padding: "10px", color: "#64748b", fontSize: 13, fontWeight: 600, cursor: "pointer" },
   dropZone: { display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 6, textAlign: "center", border: "1px dashed #2c3545", borderRadius: 12, padding: "30px 18px", cursor: "pointer", background: "#0f1420" },
@@ -1080,6 +1202,7 @@ const S = {
   stepBtn: { width: 40, height: 40, borderRadius: 10, border: "1px solid #232a38", background: "#161b26", color: "#e2e8f0", fontSize: 22, cursor: "pointer", lineHeight: 1 },
   parcelasNum: { minWidth: 48, textAlign: "center", fontSize: 18, fontWeight: 700, fontVariantNumeric: "tabular-nums" },
   parcelasInfo: { fontSize: 12, color: "#64748b", flexBasis: "100%", marginTop: 8, lineHeight: 1.5 },
+  avisoSerie: { fontSize: 12, lineHeight: 1.55, color: "#fbbf24", background: "rgba(251,191,36,0.08)", border: "1px solid rgba(251,191,36,0.25)", borderRadius: 10, padding: "9px 11px", marginTop: 18 },
   segmento: { display: "flex", gap: 6, marginTop: 10, background: "#0f1420", border: "1px solid #232a38", borderRadius: 10, padding: 3 },
   segBtn: { flex: 1, background: "transparent", border: "none", borderRadius: 8, padding: "8px 6px", color: "#64748b", fontSize: 13, fontWeight: 600, cursor: "pointer" },
   segAtivo: { background: "#232a38", color: "#e2e8f0" },

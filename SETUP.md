@@ -183,6 +183,78 @@ Tudo entra como **pago**, já que saiu do extrato, e vai para o mês da própria
 transação — não para o mês aberto na tela. Um extrato que cruza a virada do mês
 distribui os lançamentos corretamente.
 
+## Editar um gasto parcelado
+
+Um gasto em N parcelas são N linhas no banco, ligadas pelo `grupo_parcela`.
+Editar qualquer uma delas **reescreve a série inteira**, a partir do mês da
+primeira parcela — é o que permite corrigir "esqueci que eram 5x" ou "digitei
+o valor total em vez do mensal" sem apagar e relançar.
+
+A reescrita preserva o que não deve se perder:
+
+- **`pago` por posição** — se a parcela 1 e a 2 estavam pagas, continuam pagas
+  depois da edição, mesmo que o valor ou a quantidade mude.
+- **`fitid`** fica na primeira linha, para não reabrir a porta a uma
+  reimportação duplicada.
+- Reduzir a quantidade descarta as parcelas excedentes; aumentar cria as novas
+  nos meses seguintes.
+
+A ordem das operações é **inserir e depois apagar**, nunca o contrário: se o
+insert falhar, o usuário vê o erro e os dados antigos continuam lá. Não é uma
+transação — o Supabase pelo cliente não dá atomicidade aqui —, então o pior
+caso é ficar com a série duplicada, o que é visível e corrigível, em vez de
+perder o gasto.
+
+## PWA: o convite para instalar
+
+Três peças, todas em `public/`, registradas por `src/main.jsx`:
+
+- **`manifest.webmanifest`** — nome, cores e ícones. Os caminhos são relativos
+  (`"start_url": "./"`), o que faz o mesmo arquivo funcionar tanto em
+  `/ControlMoney/` quanto na raiz de outro host.
+- **`sw.js`** — service worker. O navegador só oferece instalação para sites
+  que têm um. Ele usa **rede primeiro** para a navegação: assim o app nunca
+  fica preso numa versão antiga depois de um deploy. Os assets, que têm hash
+  no nome, ficam em cache sem risco. Chamadas ao Supabase e às fontes do
+  Google nunca passam pelo cache.
+- **Ícones PNG** derivados do logo do ControlMoney. A máquina não tem PIL,
+  ImageMagick nem `pip`, então o caminho foi: `gdk-pixbuf-thumbnailer`
+  (que existe no sistema) converteu o JPEG original para PNG, e um script
+  Python decodificou, recortou e redimensionou na mão — zlib para o
+  descompactar, um passe pelos cinco filtros do PNG, média de área para
+  reduzir, e zlib de novo para gravar.
+
+  O ícone traz o símbolo **e** o nome, para não se confundir com os vários
+  apps de finanças de logo parecida. O bloco ocupa 80% do quadrado — dentro
+  da zona segura das máscaras circulares do Android, para as letras não serem
+  cortadas — sobre o navy `#1a3258` do logo.
+
+  O detalhe que deu trabalho: colar o recorte sobre um navy chapado desenhava
+  um retângulo fantasma, porque o fundo do logo original tem gradiente e um
+  bisel na borda. A solução foi não colar um bloco: cada pixel é misturado
+  com o navy conforme o quanto se destaca do fundo, então o desenho entra, o
+  fundo some e as bordas suavizadas continuam suaves.
+
+  Para regerar (se o logo mudar), veja o cabeçalho de
+  [arte/gerar-icones.py](arte/gerar-icones.py).
+
+O manifest e o service worker são injetados em `main.jsx` em vez de declarados
+no `index.html` de propósito: eles precisam do `import.meta.env.BASE_URL`, e
+assim não dependem de como o Vite reescreve (ou não) `href` no HTML.
+
+O convite em si é o componente `ConviteInstalar`. No Chrome e no Edge ele
+captura o evento `beforeinstallprompt`, segura o aviso do navegador e dispara
+no nosso botão. No iPhone esse evento não existe — o Safari não permite
+instalação programática —, então lá o convite só ensina o caminho do menu
+Compartilhar. Ele some para sempre em três casos: o app já está instalado
+(`display-mode: standalone`), a pessoa instalou (`appinstalled`), ou a pessoa
+dispensou (marca em `localStorage`, dentro de try/catch por causa da navegação
+privativa).
+
+O `background_color` do manifest é o navy do ícone (a tela de abertura fica
+coerente com ele), e o `theme_color` segue o `#0a0e16` do app, para a barra de
+status não mudar de cor quando o app termina de carregar.
+
 ## Rotina de manutenção
 
 **Alterar o app:** edite, `git push`, e o deploy sai sozinho em ~1 minuto.
