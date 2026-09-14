@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
-import { Plus, Check, Trash2, ChevronLeft, ChevronRight, X, Pencil, AlertCircle, Wallet, LogOut, Tags, Sparkles, Copy, ExternalLink } from "lucide-react";
+import { Plus, Check, Trash2, ChevronLeft, ChevronRight, X, Pencil, AlertCircle, Wallet, LogOut, Tags, Sparkles, Copy, ExternalLink, Upload } from "lucide-react";
 import { supabase } from "./lib/supabase";
 
 // ---------- helpers ----------
@@ -12,6 +12,48 @@ const pctTxt = (p) => `${p >= 10 ? Math.round(p) : p.toFixed(1).replace(".", ","
 const addMeses = (key, n) => { const { y, m } = parseKey(key); const idx = y * 12 + m + n; return monthKey(Math.floor(idx / 12), idx % 12); };
 const CORES_CAT = ["#22c55e","#38bdf8","#f472b6","#fbbf24","#a78bfa","#fb7185","#34d399","#60a5fa","#facc15","#c084fc"];
 const soma = (lista) => lista.reduce((s, g) => s + Number(g.valor || 0), 0);
+
+// Chave para reconhecer uma descrição já classificada antes ("PAG*ASSAI 1234"
+// e "PAG*ASSAI 9876" viram a mesma coisa): sem acento, sem número, sem símbolo.
+const chaveDesc = (s = "") => s
+  .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+  .toLowerCase().replace(/[^a-z ]+/g, " ").replace(/\s+/g, " ").trim();
+
+// ------------------------------------------------------------
+//  Leitor de OFX
+//  O formato é SGML: as tags de valor não fecham (<TRNAMT>-750.00),
+//  então não dá para usar um parser de XML — daí a leitura por regex.
+// ------------------------------------------------------------
+const tagOFX = (bloco, nome) => {
+  const m = bloco.match(new RegExp(`<${nome}>([^<\\r\\n]*)`, "i"));
+  return m ? m[1].trim() : "";
+};
+
+function lerOFX(texto) {
+  const blocos = texto.match(/<STMTTRN>[\s\S]*?<\/STMTTRN>/gi) || [];
+  return blocos.map((b, i) => {
+    const bruto = tagOFX(b, "DTPOSTED").replace(/[^0-9]/g, "").slice(0, 8);
+    const valor = Number(tagOFX(b, "TRNAMT").replace(",", "."));
+    const desc = tagOFX(b, "MEMO") || tagOFX(b, "NAME") || "Sem descrição";
+    if (!bruto || !Number.isFinite(valor)) return null;
+    return {
+      chave: tagOFX(b, "FITID") || `${bruto}-${valor}-${i}`,
+      mes: `${bruto.slice(0, 4)}-${bruto.slice(4, 6)}`,
+      dia: bruto.slice(6, 8),
+      desc,
+      valor,                       // negativo = saída
+      credito: valor > 0,
+    };
+  }).filter(Boolean);
+}
+
+// Bancos brasileiros costumam gerar OFX em windows-1252; lido como UTF-8 vira
+// "MERCADO CENTRAL LTDA" com losangos no lugar dos acentos.
+async function lerArquivoTexto(file) {
+  const buf = await file.arrayBuffer();
+  const utf8 = new TextDecoder("utf-8").decode(buf);
+  return utf8.includes("�") ? new TextDecoder("windows-1252").decode(buf) : utf8;
+}
 
 // ------------------------------------------------------------
 //  Monta o texto que a pessoa cola no Claude. É aqui que mora o
@@ -209,6 +251,7 @@ function Painel({ usuario }) {
   const [editRenda, setEditRenda] = useState(false);
   const [modalCategorias, setModalCategorias] = useState(false);
   const [modalAnalise, setModalAnalise] = useState(false);
+  const [modalImportar, setModalImportar] = useState(false);
   const [analise, setAnalise] = useState(null);   // texto colado de volta do Claude
   const [resumo, setResumo] = useState("");       // texto a levar para o Claude
   const { y, m } = parseKey(mesAtual);
@@ -394,6 +437,44 @@ function Painel({ usuario }) {
     setAnalise(null);
   };
 
+  // Enriquece as transações lidas do arquivo: marca as que já foram importadas
+  // antes (pelo FITID) e sugere categoria a partir do que já foi classificado.
+  const prepararImportacao = async (transacoes) => {
+    const chaves = transacoes.map(t => t.chave);
+    const [jaVistos, hist] = await Promise.all([
+      supabase.from("gastos").select("fitid").in("fitid", chaves.length ? chaves : ["-"]),
+      supabase.from("gastos").select("nome, categoria_id, subcategoria").not("categoria_id", "is", null).order("created_at", { ascending: false }).limit(500),
+    ]);
+    const importados = new Set((jaVistos.data || []).map(g => g.fitid));
+    const sugestao = {};
+    (hist.data || []).forEach(g => {
+      const k = chaveDesc(g.nome);
+      if (k && !(k in sugestao)) sugestao[k] = { categoria_id: g.categoria_id, subcategoria: g.subcategoria || "" };
+    });
+    return transacoes.map(t => ({
+      ...t,
+      jaImportada: importados.has(t.chave),
+      ...(sugestao[chaveDesc(t.desc)] || { categoria_id: "", subcategoria: "" }),
+    }));
+  };
+
+  const importarGastos = async (linhas) => {
+    const novos = linhas.map(l => ({
+      user_id: usuario.id,
+      mes: l.mes,
+      nome: l.desc,
+      valor: Math.abs(Number(l.valor)),
+      categoria_id: l.categoria_id || null,
+      subcategoria: l.subcategoria || "",
+      pago: true,                 // saiu do extrato, então já saiu da conta
+      fitid: l.chave,
+    }));
+    const { error } = await supabase.from("gastos").insert(novos);
+    if (error) throw error;
+    setModalImportar(false);
+    await carregarMes(mesAtual);
+  };
+
   const abrirNovo = () => { setEditando(null); setModalGasto(true); };
   const abrirEdicao = (g) => { setEditando({ ...g, categoriaNome: catPorId[g.categoria_id]?.nome }); setModalGasto(true); };
   const fechar = () => { setModalGasto(false); setEditando(null); };
@@ -436,6 +517,10 @@ function Painel({ usuario }) {
           <Sparkles size={15} strokeWidth={2.5} />
           {analise ? "Ver análise do mês" : "Analisar meus gastos no Claude"}
           {analise && <span style={S.selo}>salva</span>}
+        </button>
+
+        <button style={S.btnImportar} onClick={() => setModalImportar(true)}>
+          <Upload size={14} /> Importar extrato do banco (OFX)
         </button>
 
         <main style={S.lista}>
@@ -490,6 +575,8 @@ function Painel({ usuario }) {
         onRemoverCat={removerCategoria} onRemoverSub={removerSub} />}
       {modalAnalise && <ModalAnalise resumo={resumo} analise={analise} onFechar={() => setModalAnalise(false)}
         onSalvar={salvarAnalise} onApagar={apagarAnalise} />}
+      {modalImportar && <ModalImportar categorias={categorias} onFechar={() => setModalImportar(false)}
+        onPreparar={prepararImportacao} onImportar={importarGastos} />}
     </Tela>
   );
 }
@@ -510,6 +597,141 @@ function ModalRenda({ valor, onFechar, onSalvar }) {
         <button style={S.btnSec} onClick={onFechar}>Cancelar</button>
         <button style={S.btnPri} onClick={() => onSalvar(v)}>Salvar</button>
       </div>
+    </Overlay>
+  );
+}
+
+function ModalImportar({ categorias, onFechar, onPreparar, onImportar }) {
+  const [linhas, setLinhas] = useState(null);   // null = ainda sem arquivo
+  const [mostrarCreditos, setMostrarCreditos] = useState(false);
+  const [catLote, setCatLote] = useState("");
+  const [erro, setErro] = useState("");
+  const [ocupado, setOcupado] = useState(false);
+
+  const carregarArquivo = async (file) => {
+    if (!file) return;
+    setErro(""); setOcupado(true);
+    try {
+      const texto = await lerArquivoTexto(file);
+      const transacoes = lerOFX(texto);
+      if (!transacoes.length) {
+        setErro("Não encontrei transações neste arquivo. Ele é mesmo um OFX do extrato?");
+        setLinhas(null);
+        return;
+      }
+      const preparadas = await onPreparar(transacoes);
+      // Já vem marcado o que é saída, é novo e não parece transferência.
+      setLinhas(preparadas.map(l => ({ ...l, marcada: !l.credito && !l.jaImportada })));
+    } catch (e) {
+      setErro("Não consegui ler o arquivo: " + e.message);
+    } finally {
+      setOcupado(false);
+    }
+  };
+
+  const visiveis = (linhas || []).filter(l => mostrarCreditos || !l.credito);
+  const escolhidas = (linhas || []).filter(l => l.marcada && !l.jaImportada);
+  const totalEscolhido = escolhidas.reduce((s, l) => s + Math.abs(Number(l.valor)), 0);
+  const repetidas = (linhas || []).filter(l => l.jaImportada).length;
+
+  const mudar = (chave, campo, valor) =>
+    setLinhas(ls => ls.map(l => (l.chave === chave ? { ...l, [campo]: valor } : l)));
+
+  const aplicarLote = (catId) => {
+    setCatLote(catId);
+    if (!catId) return;
+    setLinhas(ls => ls.map(l => (l.marcada && !l.jaImportada ? { ...l, categoria_id: catId } : l)));
+  };
+
+  const confirmar = async () => {
+    setErro(""); setOcupado(true);
+    try {
+      await onImportar(escolhidas);
+    } catch (e) {
+      setErro("Falha ao importar: " + e.message);
+      setOcupado(false);
+    }
+  };
+
+  return (
+    <Overlay onFechar={onFechar}>
+      <h2 style={S.modalTitulo}>Importar extrato</h2>
+      <p style={S.modalAjuda}>
+        Baixe o extrato em OFX pelo app do banco. O arquivo é lido aqui no seu
+        aparelho — nada é enviado antes de você confirmar.
+      </p>
+
+      {!linhas ? (
+        <>
+          <label style={S.dropZone}>
+            <Upload size={22} color="#475569" />
+            <span style={{ fontWeight: 600, color: "#cbd5e1" }}>Escolher arquivo .ofx</span>
+            <span style={{ fontSize: 12, color: "#64748b" }}>no banco, procure por "OFX" ou "gerenciador financeiro"</span>
+            <input type="file" accept=".ofx,.OFX,text/plain" style={{ display: "none" }}
+              onChange={e => carregarArquivo(e.target.files?.[0])} />
+          </label>
+          {ocupado && <div style={S.impInfo}>Lendo o arquivo…</div>}
+          {erro && <div style={S.erro}><AlertCircle size={14} /> {erro}</div>}
+        </>
+      ) : (
+        <>
+          <div style={S.impBarra}>
+            <label style={S.impCheckLabel}>
+              <input type="checkbox" checked={mostrarCreditos} onChange={e => setMostrarCreditos(e.target.checked)} />
+              mostrar entradas
+            </label>
+            <select style={{ ...S.select, flex: 1, minWidth: 0 }} value={catLote} onChange={e => aplicarLote(e.target.value)}>
+              <option value="">categoria para as marcadas…</option>
+              {categorias.map(c => <option key={c.id} value={c.id}>{c.nome}</option>)}
+            </select>
+          </div>
+
+          {repetidas > 0 && (
+            <div style={S.impInfo}>
+              {repetidas} transaç{repetidas > 1 ? "ões já foram importadas" : "ão já foi importada"} antes e {repetidas > 1 ? "estão" : "está"} bloqueada{repetidas > 1 ? "s" : ""}.
+            </div>
+          )}
+
+          <div style={S.impLista}>
+            {visiveis.map(l => (
+              <div key={l.chave} style={{ ...S.impLinha, opacity: l.jaImportada ? 0.45 : 1 }}>
+                <input type="checkbox" checked={l.marcada && !l.jaImportada} disabled={l.jaImportada}
+                  onChange={e => mudar(l.chave, "marcada", e.target.checked)} style={{ marginTop: 3 }} />
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={S.impDesc}>{l.desc}</div>
+                  <div style={S.impMeta}>
+                    dia {l.dia} · {l.mes}
+                    {l.jaImportada && " · já importada"}
+                  </div>
+                  {!l.jaImportada && l.marcada && (
+                    <select style={{ ...S.select, marginTop: 6, fontSize: 13, padding: "6px 8px" }}
+                      value={l.categoria_id || ""} onChange={e => mudar(l.chave, "categoria_id", e.target.value)}>
+                      <option value="">— sem categoria —</option>
+                      {categorias.map(c => <option key={c.id} value={c.id}>{c.nome}</option>)}
+                    </select>
+                  )}
+                </div>
+                <div style={{ ...S.impValor, color: l.credito ? "#4ade80" : "#e2e8f0" }}>
+                  {l.credito ? "+" : ""}{brl(Math.abs(l.valor))}
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {erro && <div style={S.erro}><AlertCircle size={14} /> {erro}</div>}
+
+          <div style={S.impResumo}>
+            {escolhidas.length} selecionada{escolhidas.length === 1 ? "" : "s"} · {brl(totalEscolhido)}
+          </div>
+          <div style={S.modalAcoes}>
+            <button style={S.btnSec} onClick={() => setLinhas(null)}>Outro arquivo</button>
+            <button style={{ ...S.btnPri, opacity: escolhidas.length && !ocupado ? 1 : 0.5 }}
+              disabled={!escolhidas.length || ocupado} onClick={confirmar}>
+              {ocupado ? "Importando…" : `Importar ${escolhidas.length}`}
+            </button>
+          </div>
+        </>
+      )}
     </Overlay>
   );
 }
@@ -776,6 +998,18 @@ const S = {
   iconBtn: { width: 28, height: 28, borderRadius: 7, border: "none", background: "transparent", color: "#475569", cursor: "pointer", display: "grid", placeItems: "center", flexShrink: 0 },
 
   fab: { position: "fixed", bottom: 20, left: "50%", transform: "translateX(-50%)", display: "inline-flex", alignItems: "center", gap: 7, background: "#22c55e", color: "#04120a", fontWeight: 700, fontSize: 15, border: "none", borderRadius: 99, padding: "13px 22px", cursor: "pointer", boxShadow: "0 8px 24px rgba(34,197,94,0.35)" },
+
+  btnImportar: { display: "flex", alignItems: "center", justifyContent: "center", gap: 7, width: "100%", marginTop: -8, marginBottom: 18, background: "transparent", border: "1px dashed #232a38", borderRadius: 12, padding: "10px", color: "#64748b", fontSize: 13, fontWeight: 600, cursor: "pointer" },
+  dropZone: { display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 6, textAlign: "center", border: "1px dashed #2c3545", borderRadius: 12, padding: "30px 18px", cursor: "pointer", background: "#0f1420" },
+  impBarra: { display: "flex", alignItems: "center", gap: 10, marginBottom: 10 },
+  impCheckLabel: { display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "#94a3b8", whiteSpace: "nowrap", cursor: "pointer" },
+  impInfo: { fontSize: 12, color: "#94a3b8", background: "#141a26", border: "1px solid #232a38", borderRadius: 9, padding: "8px 11px", marginBottom: 10 },
+  impLista: { display: "flex", flexDirection: "column", gap: 7, maxHeight: "44vh", overflowY: "auto", margin: "0 -4px", padding: "0 4px" },
+  impLinha: { display: "flex", alignItems: "flex-start", gap: 10, border: "1px solid #232a38", background: "#161b26", borderRadius: 10, padding: "9px 11px" },
+  impDesc: { fontSize: 13.5, fontWeight: 600, overflowWrap: "anywhere" },
+  impMeta: { fontSize: 11, color: "#64748b", marginTop: 2 },
+  impValor: { fontSize: 13, fontWeight: 700, fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" },
+  impResumo: { fontSize: 13, color: "#94a3b8", textAlign: "right", marginTop: 12 },
 
   btnAnalise: { display: "flex", alignItems: "center", justifyContent: "center", gap: 8, width: "100%", marginBottom: 18, background: "#141a26", border: "1px solid #232a38", borderRadius: 12, padding: "11px", color: "#cbd5e1", fontSize: 14, fontWeight: 600, cursor: "pointer" },
   selo: { fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.04em", color: "#4ade80", background: "rgba(34,197,94,0.14)", border: "1px solid rgba(34,197,94,0.35)", borderRadius: 99, padding: "1px 7px" },

@@ -21,6 +21,9 @@ No ar em **https://danielvduarte.github.io/ControlMoney/**
   renda informada no mês).
 - Navegação por mês — cada mês é independente, dá para voltar e ver o que ficou pendente.
 - Sync em tempo real: alterar num aparelho reflete no outro.
+- **Importar extrato (OFX)**: lê o arquivo do banco no próprio navegador, mostra
+  as transações para você marcar categoria e confirmar, e ignora o que já foi
+  importado antes. Nada sobe para o servidor sem a sua confirmação.
 - **Analisar no Claude**: monta um resumo do mês (categorias, porcentagens,
   parcelas em aberto, comparativo com os meses anteriores) para você colar no
   Claude e trazer a resposta de volta, guardada naquele mês. Funciona na conta
@@ -145,7 +148,8 @@ src/
 - `categorias(id, user_id, nome, cor, subs[])` — subcategorias ficam no array `subs`.
 - `meses(id, user_id, mes 'YYYY-MM', renda)` — uma linha por mês, guarda a renda.
 - `gastos(id, user_id, mes, nome, valor, categoria_id, subcategoria, pago,
-  grupo_parcela, parcela_atual, total_parcelas)` — parcelas compartilham `grupo_parcela`.
+  grupo_parcela, parcela_atual, total_parcelas, fitid)` — parcelas compartilham
+  `grupo_parcela`; `fitid` é o id da transação no OFX, usado para não importar duas vezes.
 - `analises(id, user_id, mes, texto)` — a análise que você colou de volta do
   Claude, uma por mês.
 

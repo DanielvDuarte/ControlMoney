@@ -156,6 +156,33 @@ bundle é público.
 A qualidade da análise depende inteiramente de `montarResumo()`. É lá que se
 mexe para melhorar o resultado, não no prompt que a pessoa digita.
 
+## A importação de OFX
+
+Também roda inteiramente no navegador — o arquivo do extrato não sobe para
+lugar nenhum. O parse está em `lerOFX()` em [src/App.jsx](src/App.jsx).
+
+Dois detalhes que não são óbvios e vão morder quem for mexer:
+
+- **OFX é SGML, não XML.** As tags de valor não fecham (`<TRNAMT>-750.00` e
+  segue a linha), então um parser de XML engasga. Por isso a leitura é por
+  expressão regular, bloco a bloco de `<STMTTRN>`.
+- **Codificação.** Bancos brasileiros costumam gerar o arquivo em
+  windows-1252. Lido como UTF-8, todo acento vira `�`. `lerArquivoTexto()`
+  tenta UTF-8, detecta o caractere de substituição e relê como windows-1252.
+
+Contra importação duplicada, cada gasto importado guarda o `FITID` da
+transação na coluna `gastos.fitid`. Antes de mostrar a lista, o app consulta
+quais desses ids já existem e bloqueia essas linhas. Gastos digitados à mão
+ficam com `fitid` nulo.
+
+A sugestão de categoria vem do histórico: `chaveDesc()` normaliza a descrição
+(tira acento, número e símbolo), então "PAG*ASSAI 1234" e "PAG*ASSAI 9876"
+caem na mesma chave, e a categoria usada da última vez vem pré-selecionada.
+
+Tudo entra como **pago**, já que saiu do extrato, e vai para o mês da própria
+transação — não para o mês aberto na tela. Um extrato que cruza a virada do mês
+distribui os lançamentos corretamente.
+
 ## Rotina de manutenção
 
 **Alterar o app:** edite, `git push`, e o deploy sai sozinho em ~1 minuto.

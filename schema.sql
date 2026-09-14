@@ -52,11 +52,13 @@ create table if not exists public.gastos (
   grupo_parcela  uuid,                     -- mesmo id em todas as parcelas
   parcela_atual  int,
   total_parcelas int,
+  fitid          text,                     -- id da transação no OFX (evita importar 2x)
   created_at     timestamptz not null default now()
 );
 
 create index if not exists gastos_user_mes_idx on public.gastos (user_id, mes);
 create index if not exists gastos_grupo_idx     on public.gastos (grupo_parcela);
+create index if not exists gastos_fitid_idx     on public.gastos (user_id, fitid);
 
 -- ============================================================
 --  Row Level Security — cada usuário só enxerga o que é seu
