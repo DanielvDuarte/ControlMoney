@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
-import { Plus, Check, Trash2, ChevronLeft, ChevronRight, X, Pencil, AlertCircle, Wallet, LogOut, Tags, Sparkles, Copy, ExternalLink, Upload, Download, Share, Sun, Moon } from "lucide-react";
+import { Plus, Check, Trash2, ChevronLeft, ChevronRight, X, Pencil, AlertCircle, Wallet, LogOut, Tags, Sparkles, Copy, ExternalLink, Upload, Download, Share, Sun, Moon, CloudOff, RefreshCw } from "lucide-react";
 import { supabase } from "./lib/supabase";
 
 // ---------- helpers ----------
@@ -261,6 +261,8 @@ function Painel({ usuario }) {
   const [modalAnalise, setModalAnalise] = useState(false);
   const [modalImportar, setModalImportar] = useState(false);
   const [erroGlobal, setErroGlobal] = useState("");
+  const [falhaRede, setFalhaRede] = useState(false);
+  const [offline, setOffline] = useState(() => !navigator.onLine);
   const [analise, setAnalise] = useState(null);   // texto colado de volta do Claude
   const [resumo, setResumo] = useState("");       // texto a levar para o Claude
   const { y, m } = parseKey(mesAtual);
@@ -276,19 +278,40 @@ function Painel({ usuario }) {
   // ---------- carregar dados do mês ----------
   const carregarMes = useCallback(async (mes) => {
     setCarregando(true);
-    const [g, r, a] = await Promise.all([
-      supabase.from("gastos").select("*").eq("mes", mes).order("created_at"),
-      supabase.from("meses").select("renda").eq("mes", mes).maybeSingle(),
-      supabase.from("analises").select("texto").eq("mes", mes).maybeSingle(),
-    ]);
-    setGastos(g.data || []);
-    setRenda(Number(r.data?.renda || 0));
-    setAnalise(a.data?.texto || null);
-    setCarregando(false);
+    try {
+      const [g, r, a] = await Promise.all([
+        supabase.from("gastos").select("*").eq("mes", mes).order("created_at"),
+        supabase.from("meses").select("renda").eq("mes", mes).maybeSingle(),
+        supabase.from("analises").select("texto").eq("mes", mes).maybeSingle(),
+      ]);
+      if (g.error || r.error || a.error) throw (g.error || r.error || a.error);
+      setGastos(g.data || []);
+      setRenda(Number(r.data?.renda || 0));
+      setAnalise(a.data?.texto || null);
+      setFalhaRede(false);
+    } catch {
+      // Sem isto, a falha cairia num `setGastos([])` e a tela diria
+      // "nenhum gasto neste mês" — como se os lançamentos tivessem sumido.
+      setFalhaRede(true);
+    } finally {
+      setCarregando(false);
+    }
   }, []);
 
   useEffect(() => { carregarCategorias(); }, [carregarCategorias]);
   useEffect(() => { carregarMes(mesAtual); }, [mesAtual, carregarMes]);
+
+  // Quando a conexão volta, recarrega sozinho — sem exigir toque nenhum.
+  useEffect(() => {
+    const voltou = () => { setOffline(false); carregarMes(mesAtual); };
+    const caiu = () => setOffline(true);
+    window.addEventListener("online", voltou);
+    window.addEventListener("offline", caiu);
+    return () => {
+      window.removeEventListener("online", voltou);
+      window.removeEventListener("offline", caiu);
+    };
+  }, [mesAtual, carregarMes]);
 
   // ---------- sync em tempo real (outros aparelhos) ----------
   useEffect(() => {
@@ -537,6 +560,12 @@ function Painel({ usuario }) {
           </div>
         </header>
 
+        <ConviteInstalar />
+
+        {falhaRede ? (
+          <SemDados offline={offline} onTentar={() => carregarMes(mesAtual)} />
+        ) : (
+        <>
         <section style={{ ...S.heroSaldo, borderColor: saldoNeg ? "var(--vermelho-borda)" : "var(--verde-borda)" }}>
           <div style={S.heroTopo}>
             <span style={S.heroLabel}>{saldoNeg ? "Faltam" : "Sobra depois de tudo"}</span>
@@ -561,7 +590,6 @@ function Painel({ usuario }) {
           {analise && <span style={S.selo}>salva</span>}
         </button>
 
-        <ConviteInstalar />
 
         <button style={S.btnImportar} onClick={() => setModalImportar(true)}>
           <Upload size={14} /> Importar extrato do banco (OFX)
@@ -610,9 +638,11 @@ function Painel({ usuario }) {
             })
           )}
         </main>
+        </>
+        )}
       </div>
 
-      <button style={S.fab} onClick={abrirNovo}><Plus size={20} strokeWidth={2.5} /> Novo gasto</button>
+      {!falhaRede && <button style={S.fab} onClick={abrirNovo}><Plus size={20} strokeWidth={2.5} /> Novo gasto</button>}
 
       {modalGasto && <ModalGasto categorias={categorias} editando={editando} erroExterno={erroGlobal} onFechar={fechar} onSalvar={salvarGasto} />}
       {editRenda && <ModalRenda valor={renda} onFechar={() => setEditRenda(false)} onSalvar={definirRenda} />}
@@ -1151,6 +1181,29 @@ function ConviteInstalar() {
   );
 }
 
+// Mostrado no lugar do painel quando os dados não puderam ser carregados.
+// Nunca mostramos os cards zerados nessa situação: R$ 0,00 em toda parte
+// é indistinguível de um mês realmente vazio.
+function SemDados({ offline, onTentar }) {
+  return (
+    <div style={S.semDados}>
+      <div style={S.semDadosIcone}><CloudOff size={26} color="var(--texto-4)" /></div>
+      <p style={S.semDadosTitulo}>
+        {offline ? "Você está sem conexão" : "Não consegui falar com o servidor"}
+      </p>
+      <p style={S.semDadosTexto}>
+        Seus gastos estão salvos e intactos — só não dá para carregá-los agora.
+        {offline
+          ? " Assim que a internet voltar, o app se atualiza sozinho."
+          : " Pode ser instabilidade momentânea; tente de novo em alguns instantes."}
+      </p>
+      <button style={S.semDadosBtn} onClick={onTentar}>
+        <RefreshCw size={14} /> Tentar de novo
+      </button>
+    </div>
+  );
+}
+
 function Tela({ children }) { return <div style={S.tela}>{children}</div>; }
 
 // ---------- estilos ----------
@@ -1205,6 +1258,12 @@ const S = {
   iconBtn: { width: 28, height: 28, borderRadius: 7, border: "none", background: "transparent", color: "var(--texto-5)", cursor: "pointer", display: "grid", placeItems: "center", flexShrink: 0 },
 
   fab: { position: "fixed", bottom: 20, left: "50%", transform: "translateX(-50%)", display: "inline-flex", alignItems: "center", gap: 7, background: "var(--verde)", color: "var(--sobre-verde)", fontWeight: 700, fontSize: 15, border: "none", borderRadius: 99, padding: "13px 22px", cursor: "pointer", boxShadow: "0 8px 24px rgba(34,197,94,0.35)" },
+
+  semDados: { textAlign: "center", padding: "40px 22px", border: "1px dashed var(--borda)", borderRadius: 16, background: "var(--superficie-2)" },
+  semDadosIcone: { display: "grid", placeItems: "center", width: 54, height: 54, borderRadius: 99, background: "var(--recuo)", margin: "0 auto 14px" },
+  semDadosTitulo: { fontSize: 16, fontWeight: 700, letterSpacing: "-0.01em", marginBottom: 7 },
+  semDadosTexto: { fontSize: 13.5, color: "var(--texto-4)", lineHeight: 1.55, maxWidth: 340, margin: "0 auto" },
+  semDadosBtn: { display: "inline-flex", alignItems: "center", gap: 7, marginTop: 18, background: "var(--botao-neutro)", border: "1px solid var(--borda)", borderRadius: 10, padding: "10px 16px", color: "var(--texto-2)", fontSize: 14, fontWeight: 600, cursor: "pointer" },
 
   convite: { display: "flex", alignItems: "center", gap: 11, background: "var(--superficie-2)", border: "1px solid var(--borda)", borderRadius: 12, padding: "11px 10px 11px 13px", marginBottom: 14 },
   conviteIcone: { display: "grid", placeItems: "center", width: 34, height: 34, borderRadius: 9, background: "rgba(34,197,94,0.12)", flexShrink: 0 },

@@ -27,6 +27,9 @@ No ar em **https://danielvduarte.github.io/ControlMoney/**
   renda informada no mês).
 - Navegação por mês — cada mês é independente, dá para voltar e ver o que ficou pendente.
 - Tema claro ou escuro, num botão no cabeçalho; a escolha fica salva no aparelho.
+- Instalável como app (PWA). Sem internet ele abre, mas avisa que não conseguiu
+  carregar os dados em vez de mostrar o mês vazio — e recarrega sozinho quando
+  a conexão volta.
 - Sync em tempo real: alterar num aparelho reflete no outro.
 - **Importar extrato (OFX)**: lê o arquivo do banco no próprio navegador, mostra
   as transações para você marcar categoria e confirmar, e ignora o que já foi

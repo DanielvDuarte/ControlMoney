@@ -299,6 +299,31 @@ pintura. Se ficasse só no React, quem escolheu o tema claro veria um lampejo
 escuro a cada abertura. O mesmo handler atualiza a meta `theme-color`, para a
 barra do navegador no celular acompanhar.
 
+## O que acontece sem internet
+
+O service worker guarda a casca do app (HTML e JavaScript), então ele **abre**
+offline e a sessão de login sobrevive — o token fica no navegador. Mas os
+dados vivem no Supabase e vêm pela rede: sem conexão, nenhuma consulta volta.
+
+O app **não funciona offline**, e o cuidado aqui é dizer isso com clareza.
+Antes, a falha caía num `setGastos([])` e a tela anunciava "nenhum gasto neste
+mês" — indistinguível de um mês realmente vazio, como se os lançamentos
+tivessem sumido. Um app de contas não pode dar esse susto.
+
+Agora `carregarMes()` captura o erro e liga `falhaRede`; nesse estado o painel
+inteiro (saldo, resumo, lista, botão de novo gasto) dá lugar ao componente
+`SemDados`, que diz o que houve e garante que os dados estão salvos. Nada de
+cards zerados: `R$ 0,00` em toda parte mentiria tanto quanto a lista vazia.
+
+A distinção entre "sem conexão" e "servidor fora do ar" vem de
+`navigator.onLine`, e serve só para escolher a frase — a tela aparece nos dois
+casos, porque `navigator.onLine` mente com frequência (dá `true` para quem
+está num Wi-Fi sem internet). Quem decide é a falha da consulta; o
+`navigator.onLine` só ajusta o texto.
+
+Um listener de `online` recarrega sozinho quando a conexão volta, sem exigir
+toque.
+
 ## Rotina de manutenção
 
 **Alterar o app:** edite, `git push`, e o deploy sai sozinho em ~1 minuto.
