@@ -242,14 +242,30 @@ O manifest e o service worker são injetados em `main.jsx` em vez de declarados
 no `index.html` de propósito: eles precisam do `import.meta.env.BASE_URL`, e
 assim não dependem de como o Vite reescreve (ou não) `href` no HTML.
 
-O convite em si é o componente `ConviteInstalar`. No Chrome e no Edge ele
-captura o evento `beforeinstallprompt`, segura o aviso do navegador e dispara
-no nosso botão. No iPhone esse evento não existe — o Safari não permite
-instalação programática —, então lá o convite só ensina o caminho do menu
-Compartilhar. Ele some para sempre em três casos: o app já está instalado
+O convite em si é o componente `ConviteInstalar`, renderizado **na tela de
+login e no painel** — quem ainda não entrou também precisa vê-lo.
+
+Ele aparece sempre, e o botão automático é um bônus, não a condição. Essa
+distinção importa: `beforeinstallprompt` é um evento pouco confiável — o
+Chrome só o emite depois de algum engajamento com a página (às vezes exige uma
+segunda visita) e o Firefox nunca o emite. A primeira versão deste componente
+dependia só dele e, quando não disparava, não mostrava nada: silêncio total,
+indistinguível de um bug. Agora, sem o evento, o convite mostra a instrução
+manual do navegador em uso (`dicaInstalacao()`): menu ⋮ no Android, botão
+Compartilhar no iPhone, ícone da barra de endereço no computador.
+
+Ele some para sempre em três casos: o app já está instalado
 (`display-mode: standalone`), a pessoa instalou (`appinstalled`), ou a pessoa
 dispensou (marca em `localStorage`, dentro de try/catch por causa da navegação
 privativa).
+
+Para depurar "o convite não aparece", o caminho mais rápido é o console do
+navegador, na página publicada:
+
+```js
+matchMedia("(display-mode: standalone)").matches   // true = já instalado
+localStorage.getItem("convite-instalar-dispensado") // "1" = dispensado antes
+```
 
 O `background_color` do manifest é o navy do ícone (a tela de abertura fica
 coerente com ele), e o `theme_color` segue o `#0a0e16` do app, para a barra de

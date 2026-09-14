@@ -212,6 +212,8 @@ function Login() {
         <button style={S.linkBtn} onClick={() => { setModo(m => m === "entrar" ? "cadastrar" : "entrar"); setErro(""); setMsg(""); }}>
           {modo === "entrar" ? "Não tem conta? Criar uma" : "Já tem conta? Entrar"}
         </button>
+
+        <div style={{ marginTop: 26 }}><ConviteInstalar /></div>
       </div>
     </Tela>
   );
@@ -1038,26 +1040,38 @@ function Overlay({ children, onFechar }) {
 // ============================================================
 const CHAVE_DISPENSA = "convite-instalar-dispensado";
 
+// Instrução manual por navegador, para quando o `beforeinstallprompt` não
+// existe ou ainda não disparou — o Chrome só o emite depois de algum
+// engajamento, e o Firefox nunca o emite.
+function dicaInstalacao() {
+  const ua = navigator.userAgent;
+  const ios = /iphone|ipad|ipod/i.test(ua);
+  const android = /android/i.test(ua);
+  const firefox = /firefox|fxios/i.test(ua);
+
+  if (ios) return <>Toque em <Share size={12} style={{ verticalAlign: "-2px" }} /> na barra do navegador e depois em <b>Adicionar à Tela de Início</b>.</>;
+  if (android) return <>Abra o menu <b>⋮</b> do navegador e toque em <b>Instalar app</b> (ou "Adicionar à tela inicial").</>;
+  if (firefox) return <>No Firefox para computador não há instalação. Use o Chrome ou o Edge, ou salve esta página nos favoritos.</>;
+  return <>Clique no ícone de instalar na barra de endereço, ou no menu <b>⋮</b> → <b>Instalar</b>.</>;
+}
+
 function ConviteInstalar() {
   const [evento, setEvento] = useState(null);
-  const [iosVisivel, setIosVisivel] = useState(false);
+  const [visivel, setVisivel] = useState(false);
 
   useEffect(() => {
-    // Já instalado (aberto pelo atalho): nunca convida.
+    // Aberto pelo atalho, ou já dispensado: não insiste.
     const instalado = window.matchMedia("(display-mode: standalone)").matches || window.navigator.standalone === true;
     let dispensado = false;
-    try { dispensado = localStorage.getItem(CHAVE_DISPENSA) === "1"; } catch { /* modo privativo */ }
+    try { dispensado = localStorage.getItem(CHAVE_DISPENSA) === "1"; } catch { /* navegação privativa */ }
     if (instalado || dispensado) return;
 
+    setVisivel(true);
+
     const aoPoderInstalar = (e) => { e.preventDefault(); setEvento(e); };
-    const aoInstalar = () => { setEvento(null); setIosVisivel(false); };
+    const aoInstalar = () => { setEvento(null); setVisivel(false); };
     window.addEventListener("beforeinstallprompt", aoPoderInstalar);
     window.addEventListener("appinstalled", aoInstalar);
-
-    const ios = /iphone|ipad|ipod/i.test(navigator.userAgent);
-    const safari = !/crios|fxios|edgios/i.test(navigator.userAgent);
-    if (ios && safari) setIosVisivel(true);
-
     return () => {
       window.removeEventListener("beforeinstallprompt", aoPoderInstalar);
       window.removeEventListener("appinstalled", aoInstalar);
@@ -1066,7 +1080,7 @@ function ConviteInstalar() {
 
   const dispensar = () => {
     try { localStorage.setItem(CHAVE_DISPENSA, "1"); } catch { /* ignora */ }
-    setEvento(null); setIosVisivel(false);
+    setVisivel(false);
   };
 
   const instalar = async () => {
@@ -1076,7 +1090,7 @@ function ConviteInstalar() {
     dispensar();
   };
 
-  if (!evento && !iosVisivel) return null;
+  if (!visivel) return null;
 
   return (
     <div style={S.convite}>
@@ -1084,9 +1098,7 @@ function ConviteInstalar() {
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={S.conviteTitulo}>Instalar no aparelho</div>
         <div style={S.conviteTexto}>
-          {evento
-            ? "Cria um atalho e abre em tela cheia, como um aplicativo."
-            : <>Toque em <Share size={12} style={{ verticalAlign: "-2px" }} /> e depois em <b>Adicionar à Tela de Início</b>.</>}
+          {evento ? "Cria um atalho e abre em tela cheia, como um aplicativo." : dicaInstalacao()}
         </div>
       </div>
       {evento && <button style={S.conviteBtn} onClick={instalar}>Instalar</button>}
