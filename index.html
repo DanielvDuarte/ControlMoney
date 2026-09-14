@@ -11,6 +11,10 @@
       * { margin: 0; padding: 0; box-sizing: border-box; }
       body { background: #0a0e16; -webkit-font-smoothing: antialiased; }
       :focus-visible { outline: 2px solid #38bdf8; outline-offset: 2px; }
+      /* Sem as setinhas de incremento: o valor é digitado, não incrementado. */
+      input[type=number]::-webkit-outer-spin-button,
+      input[type=number]::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+      input[type=number] { -moz-appearance: textfield; appearance: textfield; }
       @media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
     </style>
   </head>

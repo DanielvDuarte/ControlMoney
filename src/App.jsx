@@ -382,7 +382,7 @@ function Painel({ usuario }) {
   };
 
   const salvarGasto = async (form) => {
-    const { nome, valor, categoria, subcategoria, parcelas } = form;
+    const { nome, valor, valorUltima, categoria, subcategoria, parcelas } = form;
     const cat = await garantirCategoria(categoria);
     if (subcategoria) await registrarSub(cat, subcategoria);
 
@@ -398,7 +398,10 @@ function Painel({ usuario }) {
     const linhas = Array.from({ length: n }, (_, i) => ({
       user_id: usuario.id,
       mes: addMeses(mesAtual, i),
-      nome, valor: Number(valor), categoria_id: cat.id, subcategoria: subcategoria || "",
+      nome,
+      // Na divisão, a última parcela absorve a sobra dos centavos.
+      valor: i === n - 1 ? Number(valorUltima ?? valor) : Number(valor),
+      categoria_id: cat.id, subcategoria: subcategoria || "",
       pago: false, grupo_parcela: grupo,
       parcela_atual: n > 1 ? i + 1 : null,
       total_parcelas: n > 1 ? n : null,
@@ -855,16 +858,29 @@ function ModalGasto({ categorias, editando, onFechar, onSalvar }) {
   const [criandoSub, setCriandoSub] = useState(false);
   const [novaSub, setNovaSub] = useState("");
   const [parcelas, setParcelas] = useState(1);
+  const [modo, setModo] = useState("repetir");   // repetir | dividir
   const [erro, setErro] = useState("");
 
   const catFinal = criandoCat ? novaCat.trim() : categoria;
   const subs = categorias.find(c => c.nome === categoria)?.subs || [];
 
+  // "repetir" = o valor digitado cai em cada mês (assinatura, aluguel).
+  // "dividir" = o valor digitado é o total, rateado entre as parcelas (compra em Nx).
+  const n = Math.max(1, Number(parcelas) || 1);
+  const bruto = Number(valor) || 0;
+  const porMes = modo === "dividir" && n > 1 ? Math.floor((bruto / n) * 100) / 100 : bruto;
+  // A sobra de centavos do arredondamento vai toda na última parcela.
+  const ultima = modo === "dividir" && n > 1 ? Number((bruto - porMes * (n - 1)).toFixed(2)) : porMes;
+
   const submeter = () => {
     if (!nome.trim()) return setErro("Dê um nome ao gasto.");
     if (!valor || Number(valor) <= 0) return setErro("Informe um valor maior que zero.");
     if (!catFinal) return setErro("Escolha ou crie uma categoria.");
-    onSalvar({ nome: nome.trim(), valor, categoria: catFinal, subcategoria: criandoSub ? novaSub.trim() : subcategoria, parcelas });
+    onSalvar({
+      nome: nome.trim(), categoria: catFinal,
+      subcategoria: criandoSub ? novaSub.trim() : subcategoria,
+      valor: porMes, valorUltima: ultima, parcelas,
+    });
   };
 
   return (
@@ -874,7 +890,9 @@ function ModalGasto({ categorias, editando, onFechar, onSalvar }) {
       <label style={S.label}>Nome</label>
       <input autoFocus style={S.input} value={nome} onChange={e => setNome(e.target.value)} placeholder="Ex: Aluguel, Internet, Switch…" />
 
-      <label style={S.label}>Valor {parcelas > 1 && !editando ? "(por parcela)" : ""}</label>
+      <label style={S.label}>
+        Valor {parcelas > 1 && !editando ? (modo === "dividir" ? "(total da compra)" : "(de cada mês)") : ""}
+      </label>
       <input type="number" inputMode="decimal" style={S.input} value={valor} onChange={e => setValor(e.target.value)} placeholder="0,00" />
 
       <label style={S.label}>Categoria</label>
@@ -915,8 +933,25 @@ function ModalGasto({ categorias, editando, onFechar, onSalvar }) {
             <button style={S.stepBtn} onClick={() => setParcelas(p => Math.max(1, p - 1))}>−</button>
             <div style={S.parcelasNum}>{parcelas}x</div>
             <button style={S.stepBtn} onClick={() => setParcelas(p => Math.min(60, p + 1))}>+</button>
-            {parcelas > 1 && <span style={S.parcelasInfo}>{brl(Number(valor) || 0)}/mês · lança nos próximos {parcelas} meses</span>}
           </div>
+
+          {parcelas > 1 && (
+            <>
+              <div style={S.segmento}>
+                <button style={{ ...S.segBtn, ...(modo === "repetir" ? S.segAtivo : {}) }} onClick={() => setModo("repetir")}>
+                  Repetir o valor
+                </button>
+                <button style={{ ...S.segBtn, ...(modo === "dividir" ? S.segAtivo : {}) }} onClick={() => setModo("dividir")}>
+                  Dividir o total
+                </button>
+              </div>
+              <div style={S.parcelasInfo}>
+                {modo === "repetir"
+                  ? `${brl(bruto)} por mês durante ${parcelas} meses — total de ${brl(bruto * n)}.`
+                  : `${brl(bruto)} em ${parcelas}x de ${brl(porMes)}${ultima !== porMes ? ` (a última de ${brl(ultima)})` : ""}.`}
+              </div>
+            </>
+          )}
         </>
       )}
 
@@ -1044,7 +1079,10 @@ const S = {
   parcelasRow: { display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" },
   stepBtn: { width: 40, height: 40, borderRadius: 10, border: "1px solid #232a38", background: "#161b26", color: "#e2e8f0", fontSize: 22, cursor: "pointer", lineHeight: 1 },
   parcelasNum: { minWidth: 48, textAlign: "center", fontSize: 18, fontWeight: 700, fontVariantNumeric: "tabular-nums" },
-  parcelasInfo: { fontSize: 12, color: "#64748b", flexBasis: "100%" },
+  parcelasInfo: { fontSize: 12, color: "#64748b", flexBasis: "100%", marginTop: 8, lineHeight: 1.5 },
+  segmento: { display: "flex", gap: 6, marginTop: 10, background: "#0f1420", border: "1px solid #232a38", borderRadius: 10, padding: 3 },
+  segBtn: { flex: 1, background: "transparent", border: "none", borderRadius: 8, padding: "8px 6px", color: "#64748b", fontSize: 13, fontWeight: 600, cursor: "pointer" },
+  segAtivo: { background: "#232a38", color: "#e2e8f0" },
 
   erro: { display: "flex", alignItems: "center", gap: 6, color: "#f87171", fontSize: 13, marginTop: 14 },
   modalAcoes: { display: "flex", gap: 10, marginTop: 22 },

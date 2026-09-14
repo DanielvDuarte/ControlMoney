@@ -14,7 +14,9 @@ No ar em **https://danielvduarte.github.io/ControlMoney/**
 - Login por e-mail/senha ou conta Google; cada usuário só vê os próprios dados (RLS no Postgres).
 - Gastos por categoria e subcategoria (criáveis na hora, e apagáveis pelo
   botão de categorias no cabeçalho).
-- Parcelamento: um gasto em N parcelas é lançado automaticamente nos próximos N meses (1/N, 2/N…).
+- Parcelamento em N meses, com duas formas: **repetir** o valor todo mês
+  (aluguel, assinatura) ou **dividir** um total em N parcelas (compra em 3x) —
+  aí a última parcela absorve a sobra dos centavos.
 - Marcar como pago (fica verde); resumo de pago / falta pagar.
 - Renda por mês, com o saldo (sobra) calculado em cima dela.
 - Quanto cada categoria consumiu da renda, em porcentagem (aparece quando há
