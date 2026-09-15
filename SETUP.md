@@ -412,6 +412,26 @@ Relacionado: os botões do modal são `position: sticky` no rodapé. O formulár
 de gasto cresceu ao longo do tempo e, no celular, "Adicionar" caía abaixo da
 dobra — indistinguível de um botão que não funciona.
 
+## Renomear categoria e subcategoria
+
+São dois casos com custos bem diferentes, e o código trata cada um do seu jeito.
+
+**Categoria** é barato: `gastos.categoria_id` aponta para o id, nunca para o
+nome. Trocar `categorias.nome` é um `update` numa linha e todos os gastos
+acompanham. O único tropeço possível é a restrição `unique (user_id, nome)`,
+e a mensagem de erro é traduzida para "já existe uma categoria chamada X".
+
+**Subcategoria** é caro: ela vive em dois lugares — no array
+`categorias.subs` e, copiada, em cada `gastos.subcategoria`. Renomear só no
+array deixaria os lançamentos antigos com o nome velho, órfãos de qualquer
+filtro. Por isso `renomearSub()` faz as duas escritas: atualiza o array e
+depois `update gastos set subcategoria = novo where categoria_id = … and
+subcategoria = antigo`.
+
+Essa duplicação é herança do modelo original (subcategoria como texto solto,
+sem tabela própria). Vale a pena saber disso antes de mexer: qualquer operação
+sobre nomes de subcategoria precisa lembrar dos dois lados.
+
 ## Rotina de manutenção
 
 **Alterar o app:** edite, `git push`, e o deploy sai sozinho em ~1 minuto.

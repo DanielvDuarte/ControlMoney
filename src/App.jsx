@@ -460,6 +460,40 @@ function Painel({ usuario }) {
 
   // Apagar categoria: os gastos que a usam não somem — a FK é `on delete set
   // null`, então eles caem no grupo "Sem categoria" com os valores intactos.
+  // Renomear categoria é barato: os gastos apontam para o id, não para o nome.
+  const renomearCategoria = async (cat, novo) => {
+    const n = novo.trim();
+    if (!n || n === cat.nome) return;
+    const { error } = await supabase.from("categorias").update({ nome: n }).eq("id", cat.id);
+    if (error) {
+      window.alert(/duplicate|unique/i.test(error.message)
+        ? `Já existe uma categoria chamada "${n}".`
+        : `Não consegui renomear: ${error.message}`);
+      return;
+    }
+    await carregarCategorias();
+    carregarMes(mesAtual);
+  };
+
+  // Subcategoria é diferente: o nome fica copiado dentro de cada gasto, então
+  // renomear no molde exige atualizar os lançamentos, senão eles ficam com o
+  // nome antigo e somem dos filtros.
+  const renomearSub = async (cat, antigo, novo) => {
+    const n = novo.trim();
+    if (!n || n === antigo) return;
+    if ((cat.subs || []).some(s => s.toLowerCase() === n.toLowerCase())) {
+      window.alert(`"${cat.nome}" já tem uma subcategoria chamada "${n}".`);
+      return;
+    }
+    const novas = (cat.subs || []).map(s => (s === antigo ? n : s));
+    const { error } = await supabase.from("categorias").update({ subs: novas }).eq("id", cat.id);
+    if (error) { window.alert(`Não consegui renomear: ${error.message}`); return; }
+    await supabase.from("gastos").update({ subcategoria: n })
+      .eq("categoria_id", cat.id).eq("subcategoria", antigo);
+    await carregarCategorias();
+    carregarMes(mesAtual);
+  };
+
   const removerCategoria = async (cat) => {
     const { count } = await supabase.from("gastos")
       .select("id", { count: "exact", head: true }).eq("categoria_id", cat.id);
@@ -808,7 +842,8 @@ function Painel({ usuario }) {
         onFechar={fechar} onSalvar={salvarGasto} />}
       {editRenda && <ModalRenda valor={renda} onFechar={() => setEditRenda(false)} onSalvar={definirRenda} />}
       {modalCategorias && <ModalCategorias categorias={categorias} onFechar={() => setModalCategorias(false)}
-        onRemoverCat={removerCategoria} onRemoverSub={removerSub} />}
+        onRemoverCat={removerCategoria} onRemoverSub={removerSub}
+        onRenomearCat={renomearCategoria} onRenomearSub={renomearSub} />}
       {modalAnalise && <ModalAnalise resumo={resumo} analise={analise} onFechar={() => setModalAnalise(false)}
         onSalvar={salvarAnalise} onApagar={apagarAnalise} />}
       {modalImportar && <ModalImportar categorias={categorias} onFechar={() => setModalImportar(false)}
@@ -1093,11 +1128,13 @@ function ModalAnalise({ resumo, analise, onFechar, onSalvar, onApagar }) {
   );
 }
 
-function ModalCategorias({ categorias, onFechar, onRemoverCat, onRemoverSub }) {
+function ModalCategorias({ categorias, onFechar, onRemoverCat, onRemoverSub, onRenomearCat, onRenomearSub }) {
   return (
     <Overlay onFechar={onFechar}>
       <h2 style={S.modalTitulo}>Categorias</h2>
-      <p style={S.modalAjuda}>Apague o que criou por engano ou não usa mais.</p>
+      <p style={S.modalAjuda}>
+        Toque no nome para corrigir. Renomear é seguro: os gastos acompanham.
+      </p>
 
       {categorias.length === 0 ? (
         <div style={S.catVazio}>
@@ -1109,7 +1146,9 @@ function ModalCategorias({ categorias, onFechar, onRemoverCat, onRemoverSub }) {
             <div key={c.id} style={S.catLinha}>
               <div style={S.catTopo}>
                 <span style={{ ...S.dot, background: c.cor }} />
-                <span style={S.catNome}>{c.nome}</span>
+                <input style={S.catNomeCampo} defaultValue={c.nome} aria-label={`Nome de ${c.nome}`}
+                  onBlur={e => onRenomearCat(c, e.target.value)}
+                  onKeyDown={e => { if (e.key === "Enter") e.target.blur(); }} />
                 <button style={S.iconBtn} onClick={() => onRemoverCat(c)} aria-label={`Apagar categoria ${c.nome}`}>
                   <Trash2 size={14} />
                 </button>
@@ -1118,7 +1157,11 @@ function ModalCategorias({ categorias, onFechar, onRemoverCat, onRemoverSub }) {
                 <div style={S.catChips}>
                   {c.subs.map(s => (
                     <span key={s} style={S.catChip}>
-                      {s}
+                      <button style={S.catChipNome} title="Renomear"
+                        onClick={() => {
+                          const novo = window.prompt(`Novo nome para a subcategoria "${s}":`, s);
+                          if (novo !== null) onRenomearSub(c, s, novo);
+                        }}>{s}</button>
                       <button style={S.catChipX} onClick={() => onRemoverSub(c, s)} aria-label={`Remover subcategoria ${s}`}>
                         <X size={11} strokeWidth={2.5} />
                       </button>
@@ -1603,7 +1646,8 @@ const S = {
   catLista: { display: "flex", flexDirection: "column", gap: 8, maxHeight: "50vh", overflowY: "auto", margin: "0 -4px", padding: "0 4px" },
   catLinha: { border: "1px solid var(--borda)", borderRadius: 11, padding: "10px 8px 10px 12px", background: "var(--superficie)" },
   catTopo: { display: "flex", alignItems: "center", gap: 9 },
-  catNome: { flex: 1, minWidth: 0, fontSize: 15, fontWeight: 600 },
+  catNomeCampo: { flex: 1, minWidth: 0, fontSize: 15, fontWeight: 600, color: "var(--texto)", background: "transparent", border: "1px solid transparent", borderRadius: 7, padding: "3px 6px", marginLeft: -6, outline: "none", fontFamily: "inherit" },
+  catChipNome: { background: "transparent", border: "none", color: "inherit", font: "inherit", cursor: "pointer", padding: 0 },
   catChips: { display: "flex", flexWrap: "wrap", gap: 6, marginTop: 9, paddingLeft: 18 },
   catChip: { display: "inline-flex", alignItems: "center", gap: 4, fontSize: 12, color: "var(--texto-3)", background: "var(--recuo)", border: "1px solid var(--borda)", borderRadius: 99, padding: "3px 4px 3px 10px" },
   catChipX: { display: "grid", placeItems: "center", width: 17, height: 17, borderRadius: 99, border: "none", background: "transparent", color: "var(--texto-4)", cursor: "pointer" },

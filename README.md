@@ -12,8 +12,8 @@ No ar em **https://danielvduarte.github.io/ControlMoney/**
 ## O que faz
 
 - Login por e-mail/senha ou conta Google; cada usuário só vê os próprios dados (RLS no Postgres).
-- Gastos por categoria e subcategoria (criáveis na hora, e apagáveis pelo
-  botão de categorias no cabeçalho).
+- Gastos por categoria e subcategoria — criáveis na hora ao lançar, e
+  renomeáveis ou apagáveis pelo botão de categorias no cabeçalho.
 - **Contas fixas** (água, luz, internet, aluguel): marque "Repetir todo mês" ao
   lançar e todo mês novo já nasce com ela — **zerada**, marcada como
   "a preencher", para você registrar o que a conta trouxe de fato em vez de
