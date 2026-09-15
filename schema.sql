@@ -32,7 +32,13 @@ create table if not exists public.meses (
   unique (user_id, mes)
 );
 
--- ---------- CONTAS FIXAS (modelo que se repete todo mês) ----------
+-- ---------- ENTRADAS EXTRAS
+create policy "ent_select" on public.entradas for select using (auth.uid() = user_id);
+create policy "ent_insert" on public.entradas for insert with check (auth.uid() = user_id);
+create policy "ent_update" on public.entradas for update using (auth.uid() = user_id) with check (auth.uid() = user_id);
+create policy "ent_delete" on public.entradas for delete using (auth.uid() = user_id);
+
+-- CONTAS FIXAS (modelo que se repete todo mês) ----------
 -- Guarda o molde, não os lançamentos: ao abrir um mês pela primeira vez, o
 -- app cria um gasto para cada conta fixa ativa. Assim não é preciso gerar
 -- parcelas até o infinito, e parar uma conta fixa não mexe no passado.
@@ -48,6 +54,20 @@ create table if not exists public.fixos (
   ativo        boolean not null default true,
   created_at   timestamptz not null default now()
 );
+
+-- ---------- ENTRADAS EXTRAS ----------
+-- A renda fixa do mês fica em `meses.renda`. Aqui entram os avulsos: um bico,
+-- um reembolso, a venda de alguma coisa. O saldo soma os dois.
+create table if not exists public.entradas (
+  id         uuid primary key default gen_random_uuid(),
+  user_id    uuid not null default auth.uid() references auth.users(id) on delete cascade,
+  mes        text not null,               -- 'YYYY-MM'
+  data       date,
+  valor      numeric(12,2) not null default 0,
+  descricao  text not null default '',
+  created_at timestamptz not null default now()
+);
+create index if not exists entradas_user_mes_idx on public.entradas (user_id, mes);
 
 -- ---------- ANÁLISES (texto colado de volta do Claude) ----------
 create table if not exists public.analises (
@@ -94,6 +114,7 @@ alter table public.meses      enable row level security;
 alter table public.gastos     enable row level security;
 alter table public.analises   enable row level security;
 alter table public.fixos      enable row level security;
+alter table public.entradas   enable row level security;
 
 -- CATEGORIAS
 create policy "cat_select" on public.categorias for select using (auth.uid() = user_id);

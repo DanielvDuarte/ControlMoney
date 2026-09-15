@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
-import { Plus, Check, Trash2, ChevronLeft, ChevronRight, X, Pencil, AlertCircle, Wallet, LogOut, Tags, Sparkles, Copy, ExternalLink, Upload, Download, Share, Sun, Moon, CloudOff, RefreshCw, Repeat, Pause, Play } from "lucide-react";
+import { Plus, Check, Trash2, ChevronLeft, ChevronRight, X, Pencil, AlertCircle, Wallet, LogOut, Tags, Sparkles, Copy, ExternalLink, Upload, Download, Share, Sun, Moon, CloudOff, RefreshCw, Repeat, Pause, Play, Printer, TrendingUp } from "lucide-react";
 import { supabase } from "./lib/supabase";
 
 // ---------- helpers ----------
@@ -71,7 +71,7 @@ async function lerArquivoTexto(file) {
 //  Monta o texto que a pessoa cola no Claude. É aqui que mora o
 //  valor da funcionalidade: quanto melhor o resumo, melhor a análise.
 // ------------------------------------------------------------
-function montarResumo({ mesKey, renda, gastos, catPorId, historico }) {
+function montarResumo({ mesKey, renda, entradas = [], gastos, catPorId, historico }) {
   const { y, m } = parseKey(mesKey);
   const total = soma(gastos);
   const daRenda = (v) => (renda > 0 ? ` (${pctTxt((v / renda) * 100)} da renda)` : "");
@@ -93,6 +93,11 @@ function montarResumo({ mesKey, renda, gastos, catPorId, historico }) {
   L.push(`Total de gastos: ${brl(total)}${daRenda(total)}`);
   L.push(`${renda - total >= 0 ? "Sobra" : "Falta"}: ${brl(Math.abs(renda - total))}`);
   L.push(`Já pago: ${brl(soma(gastos.filter(g => g.pago)))} · Em aberto: ${brl(soma(gastos.filter(g => !g.pago)))}`);
+  if (entradas.length) {
+    L.push("");
+    L.push("Entradas avulsas incluídas na renda acima:");
+    entradas.forEach(e => L.push(`- ${e.data ? `${ddmm(e.data)} — ` : ""}${e.descricao || "sem descrição"}: ${brl(e.valor)}`));
+  }
   L.push("");
 
   const grupos = {};
@@ -264,6 +269,7 @@ function Painel({ usuario }) {
   const [mesAtual, setMesAtual] = useState(monthKey(hoje.getFullYear(), hoje.getMonth()));
   const [categorias, setCategorias] = useState([]);      // [{id, nome, cor, subs}]
   const [renda, setRenda] = useState(0);
+  const [entradas, setEntradas] = useState([]);   // ganhos avulsos do mês
   const [gastos, setGastos] = useState([]);
   const [carregando, setCarregando] = useState(true);
   const [modalGasto, setModalGasto] = useState(false);
@@ -325,13 +331,14 @@ function Painel({ usuario }) {
   const carregarMes = useCallback(async (mes) => {
     setCarregando(true);
     try {
-      const [g, r, a] = await Promise.all([
+      const [g, r, a, e] = await Promise.all([
         supabase.from("gastos").select("*").eq("mes", mes)
           .order("data", { ascending: true, nullsFirst: false }).order("created_at"),
         supabase.from("meses").select("renda, fixos_gerados").eq("mes", mes).maybeSingle(),
         supabase.from("analises").select("texto").eq("mes", mes).maybeSingle(),
+        supabase.from("entradas").select("*").eq("mes", mes).order("data", { ascending: true, nullsFirst: false }),
       ]);
-      if (g.error || r.error || a.error) throw (g.error || r.error || a.error);
+      if (g.error || r.error || a.error || e.error) throw (g.error || r.error || a.error || e.error);
 
       // Primeira vez que este mês é aberto: lança as contas fixas ativas.
       // O sinalizador em `meses` garante que isso aconteça uma única vez —
@@ -348,6 +355,7 @@ function Painel({ usuario }) {
       setGastos(linhas);
       setRenda(Number(r.data?.renda || 0));
       setAnalise(a.data?.texto || null);
+      setEntradas(e.data || []);
       setFalhaRede(false);
     } catch {
       // Sem isto, a falha cairia num `setGastos([])` e a tela diria
@@ -384,11 +392,17 @@ function Painel({ usuario }) {
   }, [mesAtual, carregarMes]);
 
   // ---------- cálculos ----------
+  // Renda do mês = a fixa mais os avulsos (bico, reembolso, venda).
+  const rendaTotal = useMemo(
+    () => Number(renda || 0) + entradas.reduce((s, e) => s + Number(e.valor || 0), 0),
+    [renda, entradas]
+  );
+
   const totais = useMemo(() => {
     const total = gastos.reduce((s, g) => s + Number(g.valor || 0), 0);
     const pago = gastos.filter(g => g.pago).reduce((s, g) => s + Number(g.valor || 0), 0);
-    return { total, pago, pendente: total - pago, saldo: renda - total };
-  }, [gastos, renda]);
+    return { total, pago, pendente: total - pago, saldo: rendaTotal - total };
+  }, [gastos, rendaTotal]);
 
   const porCategoria = useMemo(() => {
     const grupos = {};
@@ -406,7 +420,21 @@ function Painel({ usuario }) {
     const v = Number(valor) || 0;
     setRenda(v);
     await supabase.from("meses").upsert({ user_id: usuario.id, mes: mesAtual, renda: v }, { onConflict: "user_id,mes" });
-    setEditRenda(false);
+  };
+
+  const adicionarEntrada = async ({ valor, descricao, data }) => {
+    const { error } = await supabase.from("entradas").insert({
+      user_id: usuario.id, mes: mesAtual,
+      valor: Number(valor) || 0, descricao: descricao || "", data: data || null,
+    });
+    if (error) throw error;
+    await carregarMes(mesAtual);
+  };
+
+  const removerEntrada = async (e) => {
+    if (!window.confirm(`Remover a entrada "${e.descricao || brl(e.valor)}"?`)) return;
+    await supabase.from("entradas").delete().eq("id", e.id);
+    await carregarMes(mesAtual);
   };
 
   const togglePago = async (g) => {
@@ -552,6 +580,15 @@ function Painel({ usuario }) {
       const fitid = existentes.find(g => g.fitid)?.fitid || null;
       const grupoId = n > 1 ? (editando.grupo_parcela || crypto.randomUUID()) : null;
 
+      // O vínculo com a conta fixa precisa sobreviver à reescrita da série —
+      // é ele que segura o selo e a trava contra lançar duas vezes no mês.
+      let fixoId = existentes.find(g => g.fixo_id)?.fixo_id || null;
+      // Marcou "repetir" num gasto que ainda não era fixo: cria o molde agora.
+      if (fixo && !fixoId && n === 1) {
+        const novo = await criarFixo({ nome, categoria_id: cat.id, subcategoria, dia });
+        fixoId = novo?.id || null;
+      }
+
       const novas = Array.from({ length: n }, (_, i) => ({
         user_id: usuario.id,
         mes: addMeses(mesInicial, i),
@@ -564,6 +601,7 @@ function Painel({ usuario }) {
         parcela_atual: n > 1 ? i + 1 : null,
         total_parcelas: n > 1 ? n : null,
         fitid: i === 0 ? fitid : null,
+        fixo_id: i === 0 ? fixoId : null,
       }));
 
       // Insere antes de apagar: se algo falhar, nada é perdido.
@@ -613,7 +651,7 @@ function Painel({ usuario }) {
     const historico = [...new Set([...Object.keys(rendaPorMes), ...Object.keys(totalPorMes)])].sort()
       .map(mes => ({ mes, renda: rendaPorMes[mes] || 0, total: totalPorMes[mes] || 0 }));
 
-    setResumo(montarResumo({ mesKey: mesAtual, renda, gastos, catPorId, historico }));
+    setResumo(montarResumo({ mesKey: mesAtual, renda: rendaTotal, entradas, gastos, catPorId, historico }));
     setModalAnalise(true);
   };
 
@@ -720,7 +758,7 @@ function Painel({ usuario }) {
 
   return (
     <Tela>
-      <div style={S.wrap}>
+      <div style={S.wrap} className="nao-imprimir">
         <header style={S.header}>
           <div style={S.marca}><Wallet size={20} strokeWidth={2.5} color="var(--verde)" /><span>Contas do mês</span></div>
           <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
@@ -742,12 +780,14 @@ function Painel({ usuario }) {
         <section style={{ ...S.heroSaldo, borderColor: saldoNeg ? "var(--vermelho-borda)" : "var(--verde-borda)" }}>
           <div style={S.heroTopo}>
             <span style={S.heroLabel}>{saldoNeg ? "Faltam" : "Sobra depois de tudo"}</span>
-            <button style={S.rendaBtn} onClick={() => setEditRenda(true)}>Renda: {brl(renda)} <Pencil size={12} /></button>
+            <button style={S.rendaBtn} onClick={() => setEditRenda(true)}>
+              Renda: {brl(rendaTotal)}{entradas.length > 0 && <TrendingUp size={11} />} <Pencil size={12} />
+            </button>
           </div>
           <div style={{ ...S.heroValor, color: saldoNeg ? "var(--vermelho)" : "var(--verde-claro)" }}>{brl(Math.abs(totais.saldo))}</div>
           <div style={S.barraWrap}>
-            <div style={S.barra}><div style={{ ...S.barraFill, width: `${Math.min(100, renda ? (totais.total / renda) * 100 : 0)}%` }} /></div>
-            <span style={S.barraTxt}>{brl(totais.total)} de {brl(renda)} comprometidos</span>
+            <div style={S.barra}><div style={{ ...S.barraFill, width: `${Math.min(100, rendaTotal ? (totais.total / rendaTotal) * 100 : 0)}%` }} /></div>
+            <span style={S.barraTxt}>{brl(totais.total)} de {brl(rendaTotal)} comprometidos</span>
           </div>
         </section>
 
@@ -771,6 +811,9 @@ function Painel({ usuario }) {
           <button style={S.btnSecundario} onClick={() => setModalImportar(true)}>
             <Upload size={14} /> Importar OFX
           </button>
+          <button style={S.btnSecundario} onClick={() => window.print()}>
+            <Printer size={14} /> PDF
+          </button>
         </div>
 
         <main style={S.lista}>
@@ -786,7 +829,7 @@ function Painel({ usuario }) {
               const cor = categorias.find(c => c.nome === cat)?.cor || "var(--texto-4)";
               const subtotal = itens.reduce((s, g) => s + Number(g.valor || 0), 0);
               // Sem renda informada não há do que tirar porcentagem.
-              const pct = renda > 0 ? (subtotal / renda) * 100 : null;
+              const pct = rendaTotal > 0 ? (subtotal / rendaTotal) * 100 : null;
               return (
                 <div key={cat} style={S.grupo}>
                   <div style={S.grupoHead}>
@@ -835,12 +878,17 @@ function Painel({ usuario }) {
         )}
       </div>
 
-      {!falhaRede && <button style={S.fab} onClick={abrirNovo}><Plus size={20} strokeWidth={2.5} /> Novo gasto</button>}
+      {!falhaRede && <button style={S.fab} className="nao-imprimir" onClick={abrirNovo}><Plus size={20} strokeWidth={2.5} /> Novo gasto</button>}
+
+      <FolhaImpressao mes={mesAtual} renda={rendaTotal} entradas={entradas}
+        gastos={gastos} catPorId={catPorId} totais={totais} />
 
       {modalGasto && <ModalGasto categorias={categorias} mes={mesAtual} editando={editando} erroExterno={erroGlobal}
         onCriarCategoria={garantirCategoria} onCriarSub={criarSubcategoria}
         onFechar={fechar} onSalvar={salvarGasto} />}
-      {editRenda && <ModalRenda valor={renda} onFechar={() => setEditRenda(false)} onSalvar={definirRenda} />}
+      {editRenda && <ModalEntradas renda={renda} entradas={entradas} mes={mesAtual}
+        onFechar={() => setEditRenda(false)} onSalvarRenda={definirRenda}
+        onAdicionar={adicionarEntrada} onRemover={removerEntrada} />}
       {modalCategorias && <ModalCategorias categorias={categorias} onFechar={() => setModalCategorias(false)}
         onRemoverCat={removerCategoria} onRemoverSub={removerSub}
         onRenomearCat={renomearCategoria} onRenomearSub={renomearSub} />}
@@ -857,18 +905,85 @@ function Painel({ usuario }) {
 // ============================================================
 //  Modais
 // ============================================================
-function ModalRenda({ valor, onFechar, onSalvar }) {
-  const [v, setV] = useState(valor || "");
+function ModalEntradas({ renda, entradas, mes, onFechar, onSalvarRenda, onAdicionar, onRemover }) {
+  const [v, setV] = useState(renda || "");
+  const [valor, setValor] = useState("");
+  const [descricao, setDescricao] = useState("");
+  const [data, setData] = useState(() => {
+    const hoje = hojeISO();
+    return hoje.slice(0, 7) === mes ? hoje : `${mes}-01`;
+  });
+  const [erro, setErro] = useState("");
+  const [ocupado, setOcupado] = useState(false);
+
+  const extra = entradas.reduce((s, e) => s + Number(e.valor || 0), 0);
+  const total = (Number(v) || 0) + extra;
+
+  const incluir = async () => {
+    if (!valor || Number(valor) <= 0) return setErro("Informe um valor maior que zero.");
+    setErro(""); setOcupado(true);
+    try {
+      await onAdicionar({ valor, descricao: descricao.trim(), data });
+      setValor(""); setDescricao("");
+    } catch (e) {
+      setErro("Não consegui adicionar: " + (e?.message || e));
+    } finally {
+      setOcupado(false);
+    }
+  };
+
   return (
     <Overlay onFechar={onFechar}>
-      <h2 style={S.modalTitulo}>Renda do mês</h2>
-      <p style={S.modalAjuda}>É sobre esse valor que o saldo é calculado.</p>
-      <label style={S.label}>Valor disponível (R$)</label>
-      <input autoFocus type="number" inputMode="decimal" style={S.input} value={v}
-        onChange={e => setV(e.target.value)} onKeyDown={e => e.key === "Enter" && onSalvar(v)} placeholder="1000" />
+      <h2 style={S.modalTitulo}>Entradas do mês</h2>
+      <p style={S.modalAjuda}>É sobre a soma delas que o saldo é calculado.</p>
+
+      <label style={S.label}>Renda fixa (salário, pró-labore)</label>
+      <input type="number" inputMode="decimal" style={S.input} value={v}
+        onChange={e => setV(e.target.value)} onBlur={() => onSalvarRenda(v)}
+        onKeyDown={e => e.key === "Enter" && e.target.blur()} placeholder="0,00" />
+
+      <div style={S.passo}><span style={S.passoNum}>+</span> Outras entradas</div>
+
+      {entradas.length > 0 && (
+        <div style={S.catLista}>
+          {entradas.map(e => (
+            <div key={e.id} style={S.entradaLinha}>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={S.entradaDesc}>{e.descricao || "Entrada avulsa"}</div>
+                {e.data && <div style={S.fixoMeta}>{ddmm(e.data)}</div>}
+              </div>
+              <b style={S.entradaValor}>+ {brl(e.valor)}</b>
+              <button style={S.iconBtn} onClick={() => onRemover(e)} aria-label="Remover entrada">
+                <Trash2 size={14} />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <div style={S.entradaForm}>
+        <input type="number" inputMode="decimal" style={{ ...S.input, flex: "0 0 110px" }} value={valor}
+          onChange={ev => setValor(ev.target.value)} placeholder="0,00" aria-label="Valor da entrada" />
+        <input style={{ ...S.input, flex: 1, minWidth: 0 }} value={descricao}
+          onChange={ev => setDescricao(ev.target.value)}
+          onKeyDown={ev => ev.key === "Enter" && incluir()}
+          placeholder="De onde veio? Ex: freela, reembolso" aria-label="Descrição da entrada" />
+      </div>
+      <input type="date" style={{ ...S.input, marginTop: 8 }} value={data}
+        onChange={ev => setData(ev.target.value)}
+        min={`${mes}-01`} max={`${mes}-${String(ultimoDia(mes)).padStart(2, "0")}`} />
+      <button style={{ ...S.btnCriarCat, opacity: ocupado ? 0.5 : 1 }} disabled={ocupado} onClick={incluir}>
+        {ocupado ? "Adicionando…" : "Adicionar entrada"}
+      </button>
+
+      {erro && <div style={S.erro}><AlertCircle size={14} /> {erro}</div>}
+
+      <div style={S.entradaTotal}>
+        Total do mês <b style={{ color: "var(--verde-claro)" }}>{brl(total)}</b>
+      </div>
+
       <div style={S.modalAcoes}>
-        <button style={S.btnSec} onClick={onFechar}>Cancelar</button>
-        <button style={S.btnPri} onClick={() => onSalvar(v)}>Salvar</button>
+        <button style={S.btnPri} onClick={() => { onSalvarRenda(v); onFechar(); }}>Pronto</button>
       </div>
     </Overlay>
   );
@@ -1335,7 +1450,12 @@ function ModalGasto({ categorias, mes, editando, erroExterno, onCriarCategoria, 
       <textarea style={{ ...S.input, minHeight: 62, resize: "vertical" }} value={observacao}
         onChange={e => setObservacao(e.target.value)} placeholder="Ex: negociado até dezembro, conferir reajuste…" />
 
-      {!editando && parcelas === 1 && (
+      {editando?.fixo_id ? (
+        <div style={S.avisoFixo}>
+          <Repeat size={14} /> Este lançamento vem de uma conta fixa. Para encerrá-la,
+          use <b>Contas fixas</b> no painel.
+        </div>
+      ) : parcelas === 1 && (
         <label style={S.caixaFixo}>
           <input type="checkbox" checked={fixo} onChange={e => setFixo(e.target.checked)} />
           <b>Repetir todo mês</b>
@@ -1540,6 +1660,87 @@ function SemDados({ offline, onTentar }) {
   );
 }
 
+// A folha impressa. Fica escondida na tela e só aparece no @media print, com
+// cores fixas (preto no branco) — o tema da interface não vale aqui.
+function FolhaImpressao({ mes, renda, entradas, gastos, catPorId, totais }) {
+  const { y, m } = parseKey(mes);
+  const grupos = {};
+  gastos.forEach(g => {
+    const nome = catPorId[g.categoria_id]?.nome || "Sem categoria";
+    (grupos[nome] ||= []).push(g);
+  });
+
+  return (
+    <div id="folha">
+      <h1 style={{ fontSize: "17pt", marginBottom: 2 }}>Contas de {MESES[m]} de {y}</h1>
+      <p style={{ fontSize: "9pt", color: "#666", marginBottom: 16 }}>
+        ControlMoney · gerado em {ddmm(hojeISO())}/{new Date().getFullYear()}
+      </p>
+
+      <table style={{ marginBottom: 18 }}>
+        <tbody>
+          <tr><td>Entradas do mês</td><td className="n">{brl(renda)}</td></tr>
+          <tr><td>Total de gastos</td><td className="n">{brl(totais.total)}</td></tr>
+          <tr><td>Já pago</td><td className="n">{brl(totais.pago)}</td></tr>
+          <tr><td>Falta pagar</td><td className="n">{brl(totais.pendente)}</td></tr>
+          <tr><td><b>{totais.saldo >= 0 ? "Sobra" : "Falta"}</b></td>
+              <td className="n"><b>{brl(Math.abs(totais.saldo))}</b></td></tr>
+        </tbody>
+      </table>
+
+      {entradas.length > 0 && (
+        <div className="grupo" style={{ marginBottom: 18 }}>
+          <h2 style={{ fontSize: "11pt", marginBottom: 4 }}>Entradas</h2>
+          <table>
+            <tbody>
+              {entradas.map(e => (
+                <tr key={e.id}>
+                  <td style={{ width: "14%" }}>{e.data ? ddmm(e.data) : ""}</td>
+                  <td>{e.descricao || "Entrada avulsa"}</td>
+                  <td className="n">{brl(e.valor)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {Object.entries(grupos).map(([nome, itens]) => {
+        const sub = itens.reduce((s, g) => s + Number(g.valor || 0), 0);
+        const pct = renda > 0 ? ` · ${pctTxt((sub / renda) * 100)} da renda` : "";
+        return (
+          <div key={nome} className="grupo" style={{ marginBottom: 16 }}>
+            <h2 style={{ fontSize: "11pt", marginBottom: 4 }}>
+              {nome} — {brl(sub)}<span style={{ fontWeight: 400, color: "#666" }}>{pct}</span>
+            </h2>
+            <table>
+              <thead>
+                <tr><th style={{ width: "13%" }}>Dia</th><th>Gasto</th>
+                    <th style={{ width: "14%" }}>Pago</th><th className="n" style={{ width: "20%" }}>Valor</th></tr>
+              </thead>
+              <tbody>
+                {itens.map(g => (
+                  <tr key={g.id}>
+                    <td>{g.data ? ddmm(g.data) : "—"}</td>
+                    <td>
+                      {g.nome}
+                      {g.total_parcelas > 1 && ` (${g.parcela_atual}/${g.total_parcelas})`}
+                      {g.subcategoria && <span style={{ color: "#666" }}> · {g.subcategoria}</span>}
+                      {g.observacao && <div style={{ fontSize: "9pt", color: "#666" }}>{g.observacao}</div>}
+                    </td>
+                    <td>{g.pago ? "sim" : "não"}</td>
+                    <td className="n">{brl(g.valor)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 function Tela({ children }) { return <div style={S.tela}>{children}</div>; }
 
 // ---------- estilos ----------
@@ -1613,6 +1814,7 @@ const S = {
   linhaSecundaria: { display: "flex", gap: 8, marginTop: -8, marginBottom: 18 },
   btnSecundario: { flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 6, background: "transparent", border: "1px dashed var(--borda)", borderRadius: 12, padding: "10px 6px", color: "var(--texto-4)", fontSize: 13, fontWeight: 600, cursor: "pointer" },
   seloFixa: { fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.04em", color: "var(--azul)", background: "color-mix(in srgb, var(--azul) 14%, transparent)", borderRadius: 99, padding: "1px 6px", flexShrink: 0 },
+  avisoFixo: { display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginTop: 18, fontSize: 12.5, lineHeight: 1.5, color: "var(--azul)", background: "color-mix(in srgb, var(--azul) 10%, transparent)", border: "1px solid color-mix(in srgb, var(--azul) 28%, transparent)", borderRadius: 11, padding: "10px 12px" },
   caixaFixo: { display: "flex", alignItems: "center", gap: 10, marginTop: 18, background: "var(--recuo)", border: "1px solid var(--borda)", borderRadius: 11, padding: "12px 13px", fontSize: 14, cursor: "pointer" },
   fixoLinha: { display: "flex", alignItems: "center", gap: 9, border: "1px solid var(--borda)", background: "var(--superficie)", borderRadius: 11, padding: "10px 8px 10px 12px" },
   fixoNome: { fontSize: 14, fontWeight: 600, overflowWrap: "anywhere" },
@@ -1636,6 +1838,12 @@ const S = {
 
   btnAnalise: { display: "flex", alignItems: "center", justifyContent: "center", gap: 8, width: "100%", marginBottom: 18, background: "var(--superficie-2)", border: "1px solid var(--borda)", borderRadius: 12, padding: "11px", color: "var(--texto-2)", fontSize: 14, fontWeight: 600, cursor: "pointer" },
   selo: { fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.04em", color: "var(--verde-claro)", background: "rgba(34,197,94,0.14)", border: "1px solid rgba(34,197,94,0.35)", borderRadius: 99, padding: "1px 7px" },
+  entradaLinha: { display: "flex", alignItems: "center", gap: 9, border: "1px solid var(--borda)", background: "var(--superficie)", borderRadius: 11, padding: "9px 8px 9px 12px" },
+  entradaDesc: { fontSize: 14, fontWeight: 600, overflowWrap: "anywhere" },
+  entradaValor: { fontSize: 13.5, fontWeight: 700, color: "var(--verde-claro)", fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" },
+  entradaForm: { display: "flex", gap: 8, marginTop: 10 },
+  entradaTotal: { display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 18, paddingTop: 14, borderTop: "1px solid var(--borda)", fontSize: 14, color: "var(--texto-3)" },
+
   passo: { display: "flex", alignItems: "center", gap: 8, fontSize: 13, fontWeight: 600, color: "var(--texto-3)", margin: "18px 0 8px" },
   passoNum: { display: "grid", placeItems: "center", width: 19, height: 19, borderRadius: 99, background: "var(--borda)", color: "var(--texto-2)", fontSize: 11, fontWeight: 700, flexShrink: 0 },
   resumoBox: { width: "100%", background: "var(--recuo)", border: "1px solid var(--borda)", borderRadius: 10, padding: "10px 12px", color: "var(--texto-3)", fontSize: 12, lineHeight: 1.5, fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace", resize: "vertical" },

@@ -30,7 +30,11 @@ No ar em **https://danielvduarte.github.io/ControlMoney/**
   que aparece na lista e vai junto no resumo levado ao Claude.
 - Editar um gasto parcelado corrige a série inteira — dá para consertar
   "esqueci que eram 5x" ou "digitei o total" sem apagar e refazer.
-- Renda por mês, com o saldo (sobra) calculado em cima dela.
+- Renda por mês, com o saldo (sobra) calculado em cima dela — e **entradas
+  avulsas** (freela, reembolso, venda) somadas à renda fixa, cada uma com
+  valor, data e de onde veio.
+- **Exportar em PDF**: botão que abre a impressão do navegador com uma folha
+  limpa do mês, pronta para salvar em PDF ou imprimir.
 - Quanto cada categoria consumiu da renda, em porcentagem (aparece quando há
   renda informada no mês).
 - Navegação por mês — cada mês é independente, dá para voltar e ver o que ficou pendente.
@@ -173,7 +177,9 @@ src/
 
 - `categorias(id, user_id, nome, cor, subs[])` — subcategorias ficam no array `subs`.
 - `meses(id, user_id, mes 'YYYY-MM', renda, fixos_gerados)` — uma linha por mês,
-  guarda a renda e se as contas fixas já foram lançadas ali.
+  guarda a renda fixa e se as contas fixas já foram lançadas ali.
+- `entradas(id, user_id, mes, data, valor, descricao)` — os ganhos avulsos do
+  mês; a renda do saldo é `meses.renda` mais a soma destes.
 - `gastos(id, user_id, mes, nome, valor, categoria_id, subcategoria, pago,
   grupo_parcela, parcela_atual, total_parcelas, fitid, observacao, data)` —
   parcelas compartilham `grupo_parcela`; `fitid` é o id da transação no OFX,

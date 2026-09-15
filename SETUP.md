@@ -196,6 +196,9 @@ A reescrita preserva o que não deve se perder:
   depois da edição, mesmo que o valor ou a quantidade mude.
 - **`fitid`** fica na primeira linha, para não reabrir a porta a uma
   reimportação duplicada.
+- **`fixo_id`** idem. Perder esse vínculo custaria caro: além do selo, é ele
+  que alimenta o índice único `(user_id, mes, fixo_id)` — sem ele, o mês
+  poderia receber uma segunda cópia da mesma conta fixa.
 - Reduzir a quantidade descarta as parcelas excedentes; aumentar cria as novas
   nos meses seguintes.
 
@@ -380,6 +383,13 @@ Três detalhes que sustentam o desenho:
   posteriores ao aberto **e ainda não pagos**, lista os meses e pergunta se
   devem ir junto. Pagos nunca são tocados: são fato consumado.
 
+A caixa "Repetir todo mês" aparece tanto ao criar quanto ao **editar** — é
+comum lembrar depois que aquilo se repete. Marcá-la num gasto existente cria o
+molde e amarra o lançamento a ele. Quando o lançamento já vem de uma conta
+fixa, a caixa dá lugar a um aviso apontando para a tela de Contas fixas: parar
+uma conta fixa tem regras próprias (limpeza dos meses futuros não pagos) e não
+faria sentido duplicar isso aqui.
+
 **O molde não guarda valor, e isso é deliberado.** Água e luz mudam todo mês;
 aluguel muda com reajuste; qualquer conta muda se for paga com atraso e juros.
 Um valor herdado seria preenchido de véspera e passaria batido justamente nos
@@ -431,6 +441,34 @@ subcategoria = antigo`.
 Essa duplicação é herança do modelo original (subcategoria como texto solto,
 sem tabela própria). Vale a pena saber disso antes de mexer: qualquer operação
 sobre nomes de subcategoria precisa lembrar dos dois lados.
+
+## Exportar em PDF
+
+Não há biblioteca de PDF no projeto. O botão chama `window.print()`, e quem
+gera o arquivo é o próprio navegador — "Salvar como PDF" no computador, a
+folha de compartilhamento no celular. Zero dependência, e funciona em tudo.
+
+O que torna isso apresentável é o par de peças em [index.html](index.html) e
+`FolhaImpressao`:
+
+- A interface do app leva `className="nao-imprimir"` e some no `@media print`.
+- `#folha` fica `display: none` na tela e aparece só na impressão.
+- A folha usa **cores fixas, preto no branco**, ignorando o tema. Imprimir a
+  interface escura gastaria tinta e ficaria ilegível.
+- `break-inside: avoid` nas linhas e nos grupos evita uma categoria partida ao
+  meio entre duas páginas.
+
+Se um dia for preciso um PDF gerado no servidor (envio automático por e-mail,
+por exemplo), aí sim entra biblioteca — mas para "minha esposa quer ver ou
+imprimir", a impressão do navegador resolve sem custo nenhum.
+
+## Entradas avulsas
+
+`meses.renda` continua sendo a renda fixa. A tabela `entradas` guarda o resto:
+bico, reembolso, venda. O app calcula `rendaTotal = renda + soma(entradas)`, e
+**tudo o que dependia de renda passou a depender dessa soma** — o saldo, a
+barra de comprometimento e as porcentagens por categoria. Ao mexer nesse
+cálculo, procure por `rendaTotal`, não por `renda`.
 
 ## Rotina de manutenção
 

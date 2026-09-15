@@ -51,6 +51,21 @@
         --sombra: rgba(15,23,42,0.45);
       }
       * { margin: 0; padding: 0; box-sizing: border-box; }
+
+      /* Impressão / salvar em PDF: a folha é preta no branco, independente do
+         tema da tela, e a interface do app sai de cena. */
+      #folha { display: none; }
+      @media print {
+        @page { margin: 14mm; size: A4 portrait; }
+        html, body { background: #fff !important; }
+        .nao-imprimir { display: none !important; }
+        #folha { display: block !important; color: #111; font-size: 11pt; }
+        #folha table { width: 100%; border-collapse: collapse; }
+        #folha th, #folha td { padding: 5px 6px; text-align: left; border-bottom: 1px solid #ddd; }
+        #folha th { font-size: 9pt; text-transform: uppercase; letter-spacing: .05em; color: #555; border-bottom: 1px solid #999; }
+        #folha td.n, #folha th.n { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+        #folha tr, #folha .grupo { break-inside: avoid; }
+      }
       body { background: var(--fundo); -webkit-font-smoothing: antialiased; }
       :focus-visible { outline: 2px solid #38bdf8; outline-offset: 2px; }
       /* Sem as setinhas de incremento: o valor é digitado, não incrementado. */
