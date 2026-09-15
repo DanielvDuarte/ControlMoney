@@ -11,6 +11,18 @@ const brl = (n) => Number(n || 0).toLocaleString("pt-BR", { style: "currency", c
 const pctTxt = (p) => `${p >= 10 ? Math.round(p) : p.toFixed(1).replace(".", ",")}%`;
 const addMeses = (key, n) => { const { y, m } = parseKey(key); const idx = y * 12 + m + n; return monthKey(Math.floor(idx / 12), idx % 12); };
 const CORES_CAT = ["#22c55e","#38bdf8","#f472b6","#fbbf24","#a78bfa","#fb7185","#34d399","#60a5fa","#facc15","#c084fc"];
+
+// Data de hoje montada a partir do relógio local. `toISOString()` devolveria
+// UTC e, depois das 21h no Brasil, já estaria no dia seguinte.
+const hojeISO = () => {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+};
+const ultimoDia = (mesKey) => { const { y, m } = parseKey(mesKey); return new Date(y, m + 1, 0).getDate(); };
+// Mesmo dia noutro mês, sem estourar: dia 31 vira 30 em novembro, 28 em fevereiro.
+const diaEm = (mesKey, dia) => `${mesKey}-${String(Math.min(dia, ultimoDia(mesKey))).padStart(2, "0")}`;
+const diaDe = (data) => Number(String(data).slice(8, 10)) || 1;
+const ddmm = (data) => `${String(data).slice(8, 10)}/${String(data).slice(5, 7)}`;
 const soma = (lista) => lista.reduce((s, g) => s + Number(g.valor || 0), 0);
 
 // Chave para reconhecer uma descrição já classificada antes ("PAG*ASSAI 1234"
@@ -92,7 +104,7 @@ function montarResumo({ mesKey, renda, gastos, catPorId, historico }) {
     const sub = soma(itens);
     L.push(`### ${nome} — ${brl(sub)}${daRenda(sub)}`);
     itens.forEach(g => {
-      const partes = [g.nome];
+      const partes = [g.data ? `${ddmm(g.data)} —` : "", g.nome].filter(Boolean);
       if (g.subcategoria) partes.push(`(${g.subcategoria})`);
       if (g.total_parcelas > 1) partes.push(`— parcela ${g.parcela_atual}/${g.total_parcelas}`);
       L.push(`- ${partes.join(" ")}: ${brl(g.valor)}${g.pago ? " [pago]" : " [em aberto]"}`);
@@ -280,7 +292,8 @@ function Painel({ usuario }) {
     setCarregando(true);
     try {
       const [g, r, a] = await Promise.all([
-        supabase.from("gastos").select("*").eq("mes", mes).order("created_at"),
+        supabase.from("gastos").select("*").eq("mes", mes)
+          .order("data", { ascending: true, nullsFirst: false }).order("created_at"),
         supabase.from("meses").select("renda").eq("mes", mes).maybeSingle(),
         supabase.from("analises").select("texto").eq("mes", mes).maybeSingle(),
       ]);
@@ -414,7 +427,8 @@ function Painel({ usuario }) {
   };
 
   const salvarGasto = async (form) => {
-    const { nome, valor, valorUltima, categoria, subcategoria, observacao, parcelas } = form;
+    const { nome, valor, valorUltima, categoria, subcategoria, observacao, data, parcelas } = form;
+    const dia = diaDe(data);
     const cat = await garantirCategoria(categoria);
     if (subcategoria) await registrarSub(cat, subcategoria);
 
@@ -440,6 +454,7 @@ function Painel({ usuario }) {
         mes: addMeses(mesInicial, i),
         nome,
         valor: i === n - 1 ? Number(valorUltima ?? valor) : Number(valor),
+        data: diaEm(addMeses(mesInicial, i), dia),
         categoria_id: cat.id, subcategoria: subcategoria || "", observacao: observacao || "",
         pago: pagoPorIndice[i] ?? false,
         grupo_parcela: grupoId,
@@ -462,6 +477,7 @@ function Painel({ usuario }) {
       nome,
       // Na divisão, a última parcela absorve a sobra dos centavos.
       valor: i === n - 1 ? Number(valorUltima ?? valor) : Number(valor),
+      data: diaEm(addMeses(mesAtual, i), dia),
       categoria_id: cat.id, subcategoria: subcategoria || "", observacao: observacao || "",
       pago: false, grupo_parcela: grupo,
       parcela_atual: n > 1 ? i + 1 : null,
@@ -526,6 +542,7 @@ function Painel({ usuario }) {
     const novos = linhas.map(l => ({
       user_id: usuario.id,
       mes: l.mes,
+      data: `${l.mes}-${l.dia}`,
       nome: l.desc,
       valor: Math.abs(Number(l.valor)),
       categoria_id: l.categoria_id || null,
@@ -625,7 +642,13 @@ function Painel({ usuario }) {
                       </button>
                       <div style={{ flex: 1, minWidth: 0 }}>
                         <div style={S.itemNome}>{g.nome}{g.total_parcelas > 1 && <span style={S.parcela}>{g.parcela_atual}/{g.total_parcelas}</span>}</div>
-                        {g.subcategoria && <div style={S.itemSub}>{g.subcategoria}</div>}
+                        {(g.data || g.subcategoria) && (
+                          <div style={S.itemSub}>
+                            {g.data && <span style={S.itemData}>{ddmm(g.data)}</span>}
+                            {g.data && g.subcategoria && " · "}
+                            {g.subcategoria}
+                          </div>
+                        )}
                         {g.observacao && <div style={S.itemObs}>{g.observacao}</div>}
                       </div>
                       <div style={{ ...S.itemValor, color: g.pago ? "var(--verde-claro)" : "var(--texto)" }}>{brl(g.valor)}</div>
@@ -644,7 +667,7 @@ function Painel({ usuario }) {
 
       {!falhaRede && <button style={S.fab} onClick={abrirNovo}><Plus size={20} strokeWidth={2.5} /> Novo gasto</button>}
 
-      {modalGasto && <ModalGasto categorias={categorias} editando={editando} erroExterno={erroGlobal} onFechar={fechar} onSalvar={salvarGasto} />}
+      {modalGasto && <ModalGasto categorias={categorias} mes={mesAtual} editando={editando} erroExterno={erroGlobal} onFechar={fechar} onSalvar={salvarGasto} />}
       {editRenda && <ModalRenda valor={renda} onFechar={() => setEditRenda(false)} onSalvar={definirRenda} />}
       {modalCategorias && <ModalCategorias categorias={categorias} onFechar={() => setModalCategorias(false)}
         onRemoverCat={removerCategoria} onRemoverSub={removerSub} />}
@@ -919,7 +942,7 @@ function ModalCategorias({ categorias, onFechar, onRemoverCat, onRemoverSub }) {
   );
 }
 
-function ModalGasto({ categorias, editando, erroExterno, onFechar, onSalvar }) {
+function ModalGasto({ categorias, mes, editando, erroExterno, onFechar, onSalvar }) {
   const nomes = categorias.map(c => c.nome);
   const [nome, setNome] = useState(editando?.nome || "");
   const [valor, setValor] = useState(editando?.valor ?? "");
@@ -930,6 +953,11 @@ function ModalGasto({ categorias, editando, erroExterno, onFechar, onSalvar }) {
   const [criandoSub, setCriandoSub] = useState(false);
   const [novaSub, setNovaSub] = useState("");
   const [observacao, setObservacao] = useState(editando?.observacao || "");
+  const [data, setData] = useState(() => {
+    if (editando?.data) return editando.data;
+    const hoje = hojeISO();
+    return hoje.slice(0, 7) === mes ? hoje : `${mes}-01`;
+  });
   const [parcelas, setParcelas] = useState(editando?.total_parcelas || 1);
   const [modo, setModo] = useState("repetir");   // repetir | dividir
   const [erro, setErro] = useState("");
@@ -951,10 +979,11 @@ function ModalGasto({ categorias, editando, erroExterno, onFechar, onSalvar }) {
     if (!nome.trim()) return setErro("Dê um nome ao gasto.");
     if (!valor || Number(valor) <= 0) return setErro("Informe um valor maior que zero.");
     if (!catFinal) return setErro("Escolha ou crie uma categoria.");
+    if (!data) return setErro("Informe a data do gasto.");
     onSalvar({
       nome: nome.trim(), categoria: catFinal,
       subcategoria: criandoSub ? novaSub.trim() : subcategoria,
-      observacao: observacao.trim(),
+      observacao: observacao.trim(), data,
       valor: porMes, valorUltima: ultima, parcelas,
     });
   };
@@ -970,6 +999,13 @@ function ModalGasto({ categorias, editando, erroExterno, onFechar, onSalvar }) {
         Valor {parcelas > 1 ? (modo === "dividir" ? "(total da compra)" : "(de cada mês)") : ""}
       </label>
       <input type="number" inputMode="decimal" style={S.input} value={valor} onChange={e => setValor(e.target.value)} placeholder="0,00" />
+
+      <label style={S.label}>Data {parcelas > 1 ? "(da primeira parcela)" : ""}</label>
+      <input type="date" style={S.input} value={data} onChange={e => setData(e.target.value)}
+        min={`${mes}-01`} max={`${mes}-${String(ultimoDia(mes)).padStart(2, "0")}`} />
+      <p style={S.dicaCampo}>
+        Vem preenchida com hoje. Mude se o gasto foi noutro dia — só dentro de {MESES[parseKey(mes).m]}.
+      </p>
 
       <label style={S.label}>Categoria</label>
       {!criandoCat ? (
@@ -1253,6 +1289,8 @@ const S = {
   itemNome: { fontWeight: 600, fontSize: 14.5, display: "flex", alignItems: "center", gap: 7, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" },
   parcela: { fontSize: 11, fontWeight: 700, color: "var(--fundo)", background: "var(--texto-3)", padding: "1px 6px", borderRadius: 6, flexShrink: 0 },
   itemSub: { fontSize: 12, color: "var(--texto-4)", marginTop: 1 },
+  itemData: { fontVariantNumeric: "tabular-nums", color: "var(--texto-3)" },
+  dicaCampo: { fontSize: 11.5, color: "var(--texto-4)", marginTop: 5, lineHeight: 1.45 },
   itemObs: { fontSize: 12, color: "var(--ambar-texto)", marginTop: 3, lineHeight: 1.45, overflowWrap: "anywhere" },
   itemValor: { fontWeight: 700, fontSize: 14.5, fontVariantNumeric: "tabular-nums", flexShrink: 0 },
   iconBtn: { width: 28, height: 28, borderRadius: 7, border: "none", background: "transparent", color: "var(--texto-5)", cursor: "pointer", display: "grid", placeItems: "center", flexShrink: 0 },

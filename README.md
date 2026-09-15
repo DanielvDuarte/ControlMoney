@@ -17,6 +17,8 @@ No ar em **https://danielvduarte.github.io/ControlMoney/**
 - Parcelamento em N meses, com duas formas: **repetir** o valor todo mês
   (aluguel, assinatura) ou **dividir** um total em N parcelas (compra em 3x) —
   aí a última parcela absorve a sobra dos centavos.
+- Data do gasto: vem preenchida com hoje e dá para recuar, para quando você
+  lembra dias depois. A lista fica ordenada por data.
 - Marcar como pago (fica verde); resumo de pago / falta pagar.
 - Observação livre por gasto ("negociado até dezembro", "conferir reajuste"),
   que aparece na lista e vai junto no resumo levado ao Claude.
@@ -166,9 +168,10 @@ src/
 - `categorias(id, user_id, nome, cor, subs[])` — subcategorias ficam no array `subs`.
 - `meses(id, user_id, mes 'YYYY-MM', renda)` — uma linha por mês, guarda a renda.
 - `gastos(id, user_id, mes, nome, valor, categoria_id, subcategoria, pago,
-  grupo_parcela, parcela_atual, total_parcelas, fitid, observacao)` — parcelas
-  compartilham `grupo_parcela`; `fitid` é o id da transação no OFX, usado para
-  não importar duas vezes.
+  grupo_parcela, parcela_atual, total_parcelas, fitid, observacao, data)` —
+  parcelas compartilham `grupo_parcela`; `fitid` é o id da transação no OFX,
+  usado para não importar duas vezes; `data` é o dia do gasto (`mes` continua
+  sendo o mês a que ele pertence).
 - `analises(id, user_id, mes, texto)` — a análise que você colou de volta do
   Claude, uma por mês.
 

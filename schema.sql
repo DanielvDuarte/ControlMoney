@@ -54,6 +54,7 @@ create table if not exists public.gastos (
   total_parcelas int,
   fitid          text,                     -- id da transação no OFX (evita importar 2x)
   observacao     text not null default '',
+  data           date,                     -- dia em que o gasto aconteceu
   created_at     timestamptz not null default now()
 );
 

@@ -324,6 +324,33 @@ está num Wi-Fi sem internet). Quem decide é a falha da consulta; o
 Um listener de `online` recarrega sozinho quando a conexão volta, sem exigir
 toque.
 
+## A data do gasto
+
+`gastos.data` é o dia em que o gasto aconteceu; `gastos.mes` continua sendo o
+mês a que ele pertence. Os dois são redundantes de propósito: `mes` é a chave
+de tudo no app (navegação, consultas, parcelas) e mexer nisso por causa de um
+campo novo seria trocar o motor com o carro andando.
+
+Por isso o seletor de data é **limitado ao mês aberto** (`min`/`max` no
+input). Escolher 30/08 enquanto se olha setembro deixaria os dois campos
+contradizendo um ao outro — ou faria o gasto sumir da tela ao ser salvo, o que
+é pior. Para lançar em agosto, navega-se até agosto.
+
+Duas armadilhas resolvidas nos helpers:
+
+- **`hojeISO()` monta a data do relógio local**, campo a campo.
+  `new Date().toISOString().slice(0,10)` devolveria UTC e, depois das 21h no
+  horário de Brasília, gravaria o dia seguinte.
+- **`diaEm()` limita o dia ao último do mês.** Uma compra em 31/01 parcelada
+  em 3x cairia em 31/02 e 31/04, que não existem; ela vira 28/02 e 30/04.
+
+A importação de OFX preenche a data com a da própria transação, e o resumo
+levado ao Claude passa a mostrar `14/09 — Aluguel`, o que lhe dá a
+distribuição dos gastos ao longo do mês.
+
+Linhas antigas ficam com `data` nula e vão para o fim da lista
+(`nullsFirst: false`), sem quebrar nada.
+
 ## Rotina de manutenção
 
 **Alterar o app:** edite, `git push`, e o deploy sai sozinho em ~1 minuto.
