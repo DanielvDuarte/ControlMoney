@@ -241,6 +241,10 @@ Três peças, todas em `public/`, registradas por `src/main.jsx`:
   Para regerar (se o logo mudar), veja o cabeçalho de
   [arte/gerar-icones.py](arte/gerar-icones.py).
 
+- **`public/marca.png`** é o mesmo símbolo **sem o texto**, usado no cabeçalho
+  do app e na tela de login. Ali o nome já vem escrito ao lado, e o texto do
+  logo ficaria ilegível a 24px.
+
 O manifest e o service worker são injetados em `main.jsx` em vez de declarados
 no `index.html` de propósito: eles precisam do `import.meta.env.BASE_URL`, e
 assim não dependem de como o Vite reescreve (ou não) `href` no HTML.

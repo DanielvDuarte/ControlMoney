@@ -1,4 +1,4 @@
-# Contas do mês
+# ControlMoney
 
 App de controle de gastos mensais com backend Supabase (Postgres + Auth),
 sincronizado entre celular e computador. React + Vite.

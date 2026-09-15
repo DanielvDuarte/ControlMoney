@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
-import { Plus, Check, Trash2, ChevronLeft, ChevronRight, X, Pencil, AlertCircle, Wallet, LogOut, Tags, Sparkles, Copy, ExternalLink, Upload, Download, Share, Sun, Moon, CloudOff, RefreshCw, Repeat, Pause, Play, Printer, TrendingUp } from "lucide-react";
+import { Plus, Check, Trash2, ChevronLeft, ChevronRight, X, Pencil, AlertCircle, LogOut, Tags, Sparkles, Copy, ExternalLink, Upload, Download, Share, Sun, Moon, CloudOff, RefreshCw, Repeat, Pause, Play, Printer, TrendingUp } from "lucide-react";
 import { supabase } from "./lib/supabase";
 
 // ---------- helpers ----------
@@ -204,8 +204,8 @@ function Login() {
     <Tela>
       <div style={S.loginWrap}>
         <div style={{ ...S.marca, justifyContent: "space-between" }}>
-          <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            <Wallet size={22} strokeWidth={2.5} color="var(--verde)" /> Contas do mês
+          <span style={{ display: "flex", alignItems: "center", gap: 9 }}>
+            <Marca tamanho={28} /> ControlMoney
           </span>
           <BotaoTema />
         </div>
@@ -760,7 +760,7 @@ function Painel({ usuario }) {
     <Tela>
       <div style={S.wrap} className="nao-imprimir">
         <header style={S.header}>
-          <div style={S.marca}><Wallet size={20} strokeWidth={2.5} color="var(--verde)" /><span>Contas do mês</span></div>
+          <div style={S.marca}><Marca tamanho={24} /><span>ControlMoney</span></div>
           <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
             <button style={S.btnNav} onClick={() => navegarMes(-1)} aria-label="Mês anterior"><ChevronLeft size={18} /></button>
             <div style={S.mesLabel}>{MESES[m]} <span style={{ color: "var(--texto-4)" }}>{y}</span></div>
@@ -1738,6 +1738,15 @@ function FolhaImpressao({ mes, renda, entradas, gastos, catPorId, totais }) {
         );
       })}
     </div>
+  );
+}
+
+// O símbolo do ControlMoney, servido de public/. Sem o texto do logo: ele
+// apareceria ilegível a 24px e repetiria o nome que já vem escrito ao lado.
+function Marca({ tamanho = 24 }) {
+  return (
+    <img src={`${import.meta.env.BASE_URL}marca.png`} width={tamanho} height={tamanho}
+      alt="" style={{ borderRadius: tamanho * 0.28, display: "block", flexShrink: 0 }} />
   );
 }
 
