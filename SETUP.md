@@ -392,6 +392,26 @@ O lançamento do mês é um gasto comum: editá-lo não altera o molde, e altera
 molde não reescreve meses já abertos. O histórico é registro do que aconteceu,
 não uma projeção recalculável.
 
+## Falhas silenciosas no salvamento
+
+`salvarGasto()` é o caminho mais longo do app: cria categoria se preciso,
+registra subcategoria, monta N parcelas, pode criar um molde de conta fixa.
+Qualquer erro no meio quebrava a promessa sem que ninguém escutasse — o modal
+ficava parado e o botão parecia morto.
+
+Agora o caminho inteiro está dentro de um `try/catch` que joga a mensagem em
+`erroGlobal`, exibida no próprio modal. `garantirCategoria()` também deixou de
+devolver `undefined` em caso de erro: ela lança, com o nome da categoria na
+mensagem.
+
+A regra vale para o resto do código: **toda escrita no Supabase deve checar
+`error`**. O cliente não lança sozinho — ele devolve `{ data: null, error }`, e
+ignorar isso produz exatamente esse tipo de bug mudo.
+
+Relacionado: os botões do modal são `position: sticky` no rodapé. O formulário
+de gasto cresceu ao longo do tempo e, no celular, "Adicionar" caía abaixo da
+dobra — indistinguível de um botão que não funciona.
+
 ## Rotina de manutenção
 
 **Alterar o app:** edite, `git push`, e o deploy sai sozinho em ~1 minuto.

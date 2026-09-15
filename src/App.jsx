@@ -434,8 +434,9 @@ function Painel({ usuario }) {
     const existente = categorias.find(c => c.nome.toLowerCase() === nome.toLowerCase());
     if (existente) return existente;
     const cor = corSugerida || CORES_CAT[categorias.length % CORES_CAT.length];
-    const { data } = await supabase.from("categorias")
+    const { data, error } = await supabase.from("categorias")
       .insert({ user_id: usuario.id, nome, cor }).select().single();
+    if (error) throw new Error(`não consegui criar a categoria "${nome}" (${error.message})`);
     await carregarCategorias();
     return data;
   };
@@ -474,6 +475,17 @@ function Painel({ usuario }) {
   };
 
   const salvarGasto = async (form) => {
+    setErroGlobal("");
+    try {
+      await salvarGastoInterno(form);
+    } catch (e) {
+      // Antes, uma falha aqui quebrava a promessa em silêncio e o modal só
+      // ficava parado — parecia que o botão não funcionava.
+      setErroGlobal("Não consegui salvar: " + (e?.message || e));
+    }
+  };
+
+  const salvarGastoInterno = async (form) => {
     const { nome, valor, valorUltima, categoria, subcategoria, observacao, data, parcelas, fixo } = form;
     const dia = diaDe(data);
     const cat = await garantirCategoria(categoria);
@@ -539,7 +551,8 @@ function Painel({ usuario }) {
       parcela_atual: n > 1 ? i + 1 : null,
       total_parcelas: n > 1 ? n : null,
     }));
-    await supabase.from("gastos").insert(linhas);
+    const { error } = await supabase.from("gastos").insert(linhas);
+    if (error) throw error;
     fechar(); carregarMes(mesAtual);
   };
 
@@ -655,7 +668,7 @@ function Painel({ usuario }) {
     carregarMes(mesAtual);
   };
 
-  const abrirNovo = () => { setEditando(null); setModalGasto(true); };
+  const abrirNovo = () => { setErroGlobal(""); setEditando(null); setModalGasto(true); };
   const abrirEdicao = (g) => { setErroGlobal(""); setEditando({ ...g, categoriaNome: catPorId[g.categoria_id]?.nome }); setModalGasto(true); };
   const fechar = () => { setModalGasto(false); setEditando(null); };
 
@@ -780,7 +793,8 @@ function Painel({ usuario }) {
 
       {!falhaRede && <button style={S.fab} onClick={abrirNovo}><Plus size={20} strokeWidth={2.5} /> Novo gasto</button>}
 
-      {modalGasto && <ModalGasto categorias={categorias} mes={mesAtual} editando={editando} erroExterno={erroGlobal} onFechar={fechar} onSalvar={salvarGasto} />}
+      {modalGasto && <ModalGasto categorias={categorias} mes={mesAtual} editando={editando} erroExterno={erroGlobal}
+        onCriarCategoria={garantirCategoria} onFechar={fechar} onSalvar={salvarGasto} />}
       {editRenda && <ModalRenda valor={renda} onFechar={() => setEditRenda(false)} onSalvar={definirRenda} />}
       {modalCategorias && <ModalCategorias categorias={categorias} onFechar={() => setModalCategorias(false)}
         onRemoverCat={removerCategoria} onRemoverSub={removerSub} />}
@@ -1113,7 +1127,7 @@ function ModalCategorias({ categorias, onFechar, onRemoverCat, onRemoverSub }) {
   );
 }
 
-function ModalGasto({ categorias, mes, editando, erroExterno, onFechar, onSalvar }) {
+function ModalGasto({ categorias, mes, editando, erroExterno, onCriarCategoria, onFechar, onSalvar }) {
   const nomes = categorias.map(c => c.nome);
   const [nome, setNome] = useState(editando?.nome || "");
   const [valor, setValor] = useState(editando?.valor ?? "");
@@ -1131,6 +1145,7 @@ function ModalGasto({ categorias, mes, editando, erroExterno, onFechar, onSalvar
   });
   const [parcelas, setParcelas] = useState(editando?.total_parcelas || 1);
   const [modo, setModo] = useState("repetir");   // repetir | dividir
+  const [criandoOcupado, setCriandoOcupado] = useState(false);
   const [fixo, setFixo] = useState(false);      // repete todo mês, sem fim
   const [erro, setErro] = useState("");
 
@@ -1146,6 +1161,25 @@ function ModalGasto({ categorias, mes, editando, erroExterno, onFechar, onSalvar
   const porMes = modo === "dividir" && n > 1 ? Math.floor((bruto / n) * 100) / 100 : bruto;
   // A sobra de centavos do arredondamento vai toda na última parcela.
   const ultima = modo === "dividir" && n > 1 ? Number((bruto - porMes * (n - 1)).toFixed(2)) : porMes;
+
+  // Cria a categoria na hora, em vez de deixá-la pendurada até o Salvar.
+  // Assim ela já aparece na lista e a subcategoria destrava.
+  const confirmarCategoria = async () => {
+    const n = novaCat.trim();
+    if (!n) return;
+    setErro(""); setCriandoOcupado(true);
+    try {
+      const cat = await onCriarCategoria(n);
+      setCategoria(cat.nome);
+      setSubcategoria("");
+      setCriandoCat(false);
+      setNovaCat("");
+    } catch (e) {
+      setErro(e?.message || String(e));
+    } finally {
+      setCriandoOcupado(false);
+    }
+  };
 
   const submeter = () => {
     if (!nome.trim()) return setErro("Dê um nome ao gasto.");
@@ -1188,10 +1222,18 @@ function ModalGasto({ categorias, mes, editando, erroExterno, onFechar, onSalvar
           <button style={S.btnMini} onClick={() => setCriandoCat(true)}>+ Nova</button>
         </div>
       ) : (
-        <div style={S.linhaSelect}>
-          <input style={S.input} value={novaCat} onChange={e => setNovaCat(e.target.value)} placeholder="Nome da categoria" autoFocus />
-          <button style={S.btnMini} onClick={() => { setCriandoCat(false); setNovaCat(""); }}>Cancelar</button>
-        </div>
+        <>
+          <div style={S.linhaSelect}>
+            <input style={S.input} value={novaCat} onChange={e => setNovaCat(e.target.value)}
+              onKeyDown={e => e.key === "Enter" && confirmarCategoria()}
+              placeholder="Nome da categoria" autoFocus />
+            <button style={S.btnMini} onClick={() => { setCriandoCat(false); setNovaCat(""); }}>Cancelar</button>
+          </div>
+          <button style={{ ...S.btnCriarCat, opacity: novaCat.trim() && !criandoOcupado ? 1 : 0.5 }}
+            disabled={!novaCat.trim() || criandoOcupado} onClick={confirmarCategoria}>
+            {criandoOcupado ? "Criando…" : `Criar categoria${novaCat.trim() ? ` "${novaCat.trim()}"` : ""}`}
+          </button>
+        </>
       )}
 
       <label style={S.label}>Subcategoria <span style={{ color: "var(--texto-4)", fontWeight: 400 }}>(opcional)</span></label>
@@ -1548,12 +1590,15 @@ const S = {
   parcelasNum: { minWidth: 48, textAlign: "center", fontSize: 18, fontWeight: 700, fontVariantNumeric: "tabular-nums" },
   parcelasInfo: { fontSize: 12, color: "var(--texto-4)", flexBasis: "100%", marginTop: 8, lineHeight: 1.5 },
   avisoSerie: { fontSize: 12, lineHeight: 1.55, color: "var(--ambar)", background: "rgba(251,191,36,0.08)", border: "1px solid rgba(251,191,36,0.25)", borderRadius: 10, padding: "9px 11px", marginTop: 18 },
+  btnCriarCat: { width: "100%", marginTop: 8, background: "var(--botao-neutro)", border: "1px solid var(--borda)", borderRadius: 10, padding: "10px", color: "var(--texto)", fontSize: 14, fontWeight: 600, cursor: "pointer" },
   segmento: { display: "flex", gap: 6, marginTop: 10, background: "var(--recuo)", border: "1px solid var(--borda)", borderRadius: 10, padding: 3 },
   segBtn: { flex: 1, background: "transparent", border: "none", borderRadius: 8, padding: "8px 6px", color: "var(--texto-4)", fontSize: 13, fontWeight: 600, cursor: "pointer" },
   segAtivo: { background: "var(--borda)", color: "var(--texto)" },
 
   erro: { display: "flex", alignItems: "center", gap: 6, color: "var(--vermelho)", fontSize: 13, marginTop: 14 },
-  modalAcoes: { display: "flex", gap: 10, marginTop: 22 },
+  // Grudados no rodapé: o formulário de gasto ficou longo e, no celular, os
+  // botões sumiam abaixo da dobra — parecia que não havia como confirmar.
+  modalAcoes: { display: "flex", gap: 10, position: "sticky", bottom: -24, zIndex: 2, background: "var(--recuo)", borderTop: "1px solid var(--borda)", margin: "22px -22px -24px", padding: "12px 22px 24px" },
   btnSec: { flex: 1, background: "transparent", border: "1px solid var(--borda)", borderRadius: 10, padding: "12px", color: "var(--texto-2)", fontSize: 15, fontWeight: 600, cursor: "pointer" },
   btnPri: { flex: 1, background: "var(--verde)", border: "none", borderRadius: 10, padding: "12px", color: "var(--sobre-verde)", fontSize: 15, fontWeight: 700, cursor: "pointer" },
 };
