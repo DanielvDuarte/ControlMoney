@@ -444,8 +444,18 @@ function Painel({ usuario }) {
   const registrarSub = async (cat, sub) => {
     if (!sub || cat.subs?.includes(sub)) return;
     const novas = [...(cat.subs || []), sub];
-    await supabase.from("categorias").update({ subs: novas }).eq("id", cat.id);
+    const { error } = await supabase.from("categorias").update({ subs: novas }).eq("id", cat.id);
+    if (error) throw new Error(`não consegui criar a subcategoria "${sub}" (${error.message})`);
     await carregarCategorias();
+  };
+
+  // Mesma ideia do botão de criar categoria: a subcategoria nasce na hora,
+  // em vez de ficar pendurada até o Salvar.
+  const criarSubcategoria = async (nomeCat, sub) => {
+    const cat = categorias.find(c => c.nome === nomeCat);
+    if (!cat) throw new Error("escolha uma categoria antes de criar a subcategoria");
+    await registrarSub(cat, sub);
+    return sub;
   };
 
   // Apagar categoria: os gastos que a usam não somem — a FK é `on delete set
@@ -794,7 +804,8 @@ function Painel({ usuario }) {
       {!falhaRede && <button style={S.fab} onClick={abrirNovo}><Plus size={20} strokeWidth={2.5} /> Novo gasto</button>}
 
       {modalGasto && <ModalGasto categorias={categorias} mes={mesAtual} editando={editando} erroExterno={erroGlobal}
-        onCriarCategoria={garantirCategoria} onFechar={fechar} onSalvar={salvarGasto} />}
+        onCriarCategoria={garantirCategoria} onCriarSub={criarSubcategoria}
+        onFechar={fechar} onSalvar={salvarGasto} />}
       {editRenda && <ModalRenda valor={renda} onFechar={() => setEditRenda(false)} onSalvar={definirRenda} />}
       {modalCategorias && <ModalCategorias categorias={categorias} onFechar={() => setModalCategorias(false)}
         onRemoverCat={removerCategoria} onRemoverSub={removerSub} />}
@@ -1127,7 +1138,7 @@ function ModalCategorias({ categorias, onFechar, onRemoverCat, onRemoverSub }) {
   );
 }
 
-function ModalGasto({ categorias, mes, editando, erroExterno, onCriarCategoria, onFechar, onSalvar }) {
+function ModalGasto({ categorias, mes, editando, erroExterno, onCriarCategoria, onCriarSub, onFechar, onSalvar }) {
   const nomes = categorias.map(c => c.nome);
   const [nome, setNome] = useState(editando?.nome || "");
   const [valor, setValor] = useState(editando?.valor ?? "");
@@ -1146,6 +1157,7 @@ function ModalGasto({ categorias, mes, editando, erroExterno, onCriarCategoria, 
   const [parcelas, setParcelas] = useState(editando?.total_parcelas || 1);
   const [modo, setModo] = useState("repetir");   // repetir | dividir
   const [criandoOcupado, setCriandoOcupado] = useState(false);
+  const [criandoSubOcupado, setCriandoSubOcupado] = useState(false);
   const [fixo, setFixo] = useState(false);      // repete todo mês, sem fim
   const [erro, setErro] = useState("");
 
@@ -1178,6 +1190,22 @@ function ModalGasto({ categorias, mes, editando, erroExterno, onCriarCategoria, 
       setErro(e?.message || String(e));
     } finally {
       setCriandoOcupado(false);
+    }
+  };
+
+  const confirmarSubcategoria = async () => {
+    const s = novaSub.trim();
+    if (!s) return;
+    setErro(""); setCriandoSubOcupado(true);
+    try {
+      await onCriarSub(categoria, s);
+      setSubcategoria(s);
+      setCriandoSub(false);
+      setNovaSub("");
+    } catch (e) {
+      setErro(e?.message || String(e));
+    } finally {
+      setCriandoSubOcupado(false);
     }
   };
 
@@ -1246,10 +1274,18 @@ function ModalGasto({ categorias, mes, editando, erroExterno, onCriarCategoria, 
           <button style={S.btnMini} onClick={() => setCriandoSub(true)} disabled={criandoCat}>+ Nova</button>
         </div>
       ) : (
-        <div style={S.linhaSelect}>
-          <input style={S.input} value={novaSub} onChange={e => setNovaSub(e.target.value)} placeholder="Nome da subcategoria" autoFocus />
-          <button style={S.btnMini} onClick={() => { setCriandoSub(false); setNovaSub(""); }}>Cancelar</button>
-        </div>
+        <>
+          <div style={S.linhaSelect}>
+            <input style={S.input} value={novaSub} onChange={e => setNovaSub(e.target.value)}
+              onKeyDown={e => e.key === "Enter" && confirmarSubcategoria()}
+              placeholder="Nome da subcategoria" autoFocus />
+            <button style={S.btnMini} onClick={() => { setCriandoSub(false); setNovaSub(""); }}>Cancelar</button>
+          </div>
+          <button style={{ ...S.btnCriarCat, opacity: novaSub.trim() && !criandoSubOcupado ? 1 : 0.5 }}
+            disabled={!novaSub.trim() || criandoSubOcupado} onClick={confirmarSubcategoria}>
+            {criandoSubOcupado ? "Criando…" : `Criar subcategoria${novaSub.trim() ? ` "${novaSub.trim()}"` : ""}`}
+          </button>
+        </>
       )}
 
       <label style={S.label}>Observação <span style={{ color: "var(--texto-4)", fontWeight: 400 }}>(opcional)</span></label>
