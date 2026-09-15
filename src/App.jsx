@@ -937,7 +937,7 @@ function ModalEntradas({ renda, entradas, mes, onFechar, onSalvarRenda, onAdicio
       <h2 style={S.modalTitulo}>Entradas do mês</h2>
       <p style={S.modalAjuda}>É sobre a soma delas que o saldo é calculado.</p>
 
-      <label style={S.label}>Renda fixa (salário, pró-labore)</label>
+      <label style={S.label}>Renda fixa (salário)</label>
       <input type="number" inputMode="decimal" style={S.input} value={v}
         onChange={e => setV(e.target.value)} onBlur={() => onSalvarRenda(v)}
         onKeyDown={e => e.key === "Enter" && e.target.blur()} placeholder="0,00" />
