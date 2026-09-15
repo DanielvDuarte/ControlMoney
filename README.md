@@ -176,8 +176,9 @@ src/
 ## Modelo de dados
 
 - `categorias(id, user_id, nome, cor, subs[])` — subcategorias ficam no array `subs`.
-- `meses(id, user_id, mes 'YYYY-MM', renda, fixos_gerados)` — uma linha por mês,
-  guarda a renda fixa e se as contas fixas já foram lançadas ali.
+- `meses(id, user_id, mes 'YYYY-MM', renda)` — uma linha por mês, guarda a renda fixa.
+- `fixos_pulados(user_id, fixo_id, mes)` — contas fixas dispensadas num mês
+  específico, para não voltarem depois de apagadas.
 - `entradas(id, user_id, mes, data, valor, descricao)` — os ganhos avulsos do
   mês; a renda do saldo é `meses.renda` mais a soma destes.
 - `gastos(id, user_id, mes, nome, valor, categoria_id, subcategoria, pago,

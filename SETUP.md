@@ -364,20 +364,27 @@ Conta fixa não é parcelamento: não tem fim, e o valor varia (água e luz muda
 todo mês; aluguel não). Por isso ela **não** gera parcelas adiantadas — não
 existe "infinitas parcelas".
 
-O que existe é um **molde** na tabela `fixos`. Quando um mês é aberto pela
-primeira vez, `gerarFixos()` cria um gasto para cada molde ativo e marca
-`meses.fixos_gerados`. Os lançamentos ficam amarrados ao molde por
-`gastos.fixo_id`.
+O que existe é um **molde** na tabela `fixos`. Toda vez que um mês é aberto,
+`gerarFixos()` compara as contas ativas com o que já está lançado ali e cria o
+que falta. Os lançamentos ficam amarrados ao molde por `gastos.fixo_id`.
 
 Três detalhes que sustentam o desenho:
 
-- **O sinalizador `fixos_gerados` é o que permite apagar.** Sem ele, apagar a
-  conta de luz de um mês a faria ressuscitar na próxima abertura, e não haveria
-  como se livrar dela.
-- **Índice único `(user_id, mes, fixo_id)`** protege contra o celular e o
-  computador abrindo o mesmo mês ao mesmo tempo: o segundo `upsert` com
-  `ignoreDuplicates` não cria nada. Gastos comuns têm `fixo_id` nulo, e no
-  Postgres nulos não colidem entre si, então o índice não atrapalha o resto.
+- **O controle é por conta, não pelo mês.** A primeira versão marcava o mês
+  inteiro como "já gerado", e isso quebrou na primeira hora de uso: quem
+  cadastrou dez contas fixas depois de abrir outubro não viu nenhuma delas
+  aparecer ali. Agora `gerarFixos()` compara o que o mês já tem com as contas
+  ativas e lança só o que falta — toda vez que o mês é aberto.
+- **`fixos_pulados` é o que permite apagar.** Sem esse registro, uma conta
+  apagada do mês voltaria na próxima abertura, e não haveria como se livrar
+  dela. Apagar um lançamento com `fixo_id` grava a dispensa daquele mês.
+- **Nunca retroage.** Só entram contas cujo `created_at` é anterior ou igual
+  ao mês aberto. Sem isso, navegar para janeiro encheria o passado de contas
+  que nem existiam na época.
+O índice único `(user_id, mes, fixo_id)` protege contra o celular e o
+computador abrindo o mesmo mês ao mesmo tempo: o segundo `upsert` com
+`ignoreDuplicates` não cria nada. Gastos comuns têm `fixo_id` nulo, e no
+Postgres nulos não colidem entre si, então o índice não atrapalha o resto.
 - **Parar uma conta fixa não mexe no passado.** A FK é `on delete set null`:
   os lançamentos já feitos continuam, só perdem o selo. Existe também um
   `ativo` para pausar sem apagar — útil para algo suspenso por uns meses.

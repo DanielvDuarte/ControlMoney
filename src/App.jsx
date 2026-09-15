@@ -300,16 +300,27 @@ function Painel({ usuario }) {
     setFixos(data || []);
   }, []);
 
-  // Lança as contas fixas ativas num mês e marca o mês como gerado.
-  // Devolve true se criou alguma coisa, para o chamador recarregar a lista.
-  const gerarFixos = useCallback(async (mes) => {
-    const { data: ativos } = await supabase.from("fixos").select("*").eq("ativo", true);
+  // Lança as contas fixas que ainda faltam neste mês. O controle é por conta,
+  // não pelo mês inteiro: assim uma conta fixa criada hoje já aparece nos meses
+  // que você abriu antes de cadastrá-la.
+  const gerarFixos = useCallback(async (mes, jaNoMes = []) => {
+    const [{ data: ativos }, { data: pulados }] = await Promise.all([
+      supabase.from("fixos").select("*").eq("ativo", true),
+      supabase.from("fixos_pulados").select("fixo_id").eq("mes", mes),
+    ]);
+    const existentes = new Set(jaNoMes.map(g => g.fixo_id).filter(Boolean));
+    const dispensados = new Set((pulados || []).map(p => p.fixo_id));
+    // Nunca retroage: uma conta criada em outubro não é lançada em agosto.
+    const faltando = (ativos || []).filter(f =>
+      !existentes.has(f.id) && !dispensados.has(f.id) && String(f.created_at).slice(0, 7) <= mes
+    );
+
     let criou = false;
-    if (ativos?.length) {
+    if (faltando.length) {
       // Nasce com valor zero de propósito: água e luz mudam todo mês, e um
       // valor herdado passaria batido justamente quando veio diferente —
       // atraso com juros, reajuste, consumo fora do padrão.
-      const linhas = ativos.map(f => ({
+      const linhas = faltando.map(f => ({
         user_id: usuario.id, mes, fixo_id: f.id,
         nome: f.nome, valor: 0,
         categoria_id: f.categoria_id, subcategoria: f.subcategoria || "",
@@ -321,9 +332,6 @@ function Painel({ usuario }) {
         .upsert(linhas, { onConflict: "user_id,mes,fixo_id", ignoreDuplicates: true });
       criou = !error;
     }
-    // Só o sinalizador; `renda` fica intacta na linha que já existir.
-    await supabase.from("meses")
-      .upsert({ user_id: usuario.id, mes, fixos_gerados: true }, { onConflict: "user_id,mes" });
     return criou;
   }, [usuario.id]);
 
@@ -334,23 +342,20 @@ function Painel({ usuario }) {
       const [g, r, a, e] = await Promise.all([
         supabase.from("gastos").select("*").eq("mes", mes)
           .order("data", { ascending: true, nullsFirst: false }).order("created_at"),
-        supabase.from("meses").select("renda, fixos_gerados").eq("mes", mes).maybeSingle(),
+        supabase.from("meses").select("renda").eq("mes", mes).maybeSingle(),
         supabase.from("analises").select("texto").eq("mes", mes).maybeSingle(),
         supabase.from("entradas").select("*").eq("mes", mes).order("data", { ascending: true, nullsFirst: false }),
       ]);
       if (g.error || r.error || a.error || e.error) throw (g.error || r.error || a.error || e.error);
 
-      // Primeira vez que este mês é aberto: lança as contas fixas ativas.
-      // O sinalizador em `meses` garante que isso aconteça uma única vez —
-      // senão, apagar uma conta fixa do mês a faria ressuscitar.
+      // Completa o que falta de conta fixa neste mês. Passamos o que já veio
+      // para não perguntar duas vezes a mesma coisa ao banco.
       let linhas = g.data || [];
-      if (!r.data?.fixos_gerados) {
-        const criou = await gerarFixos(mes);
-        if (criou) {
-          const novo = await supabase.from("gastos").select("*").eq("mes", mes)
-            .order("data", { ascending: true, nullsFirst: false }).order("created_at");
-          if (!novo.error) linhas = novo.data || [];
-        }
+      const criou = await gerarFixos(mes, linhas);
+      if (criou) {
+        const novo = await supabase.from("gastos").select("*").eq("mes", mes)
+          .order("data", { ascending: true, nullsFirst: false }).order("created_at");
+        if (!novo.error) linhas = novo.data || [];
       }
       setGastos(linhas);
       setRenda(Number(r.data?.renda || 0));
@@ -453,6 +458,13 @@ function Painel({ usuario }) {
         carregarMes(mesAtual);
         return;
       }
+    }
+    // Apagar um lançamento de conta fixa vale para este mês: registramos a
+    // dispensa para ele não voltar na próxima abertura.
+    if (g.fixo_id) {
+      await supabase.from("fixos_pulados")
+        .upsert({ user_id: usuario.id, fixo_id: g.fixo_id, mes: g.mes },
+                { onConflict: "user_id,fixo_id,mes", ignoreDuplicates: true });
     }
     setGastos(gs => gs.filter(x => x.id !== g.id));
     await supabase.from("gastos").delete().eq("id", g.id);

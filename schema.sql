@@ -25,14 +25,16 @@ create table if not exists public.meses (
   user_id    uuid not null default auth.uid() references auth.users(id) on delete cascade,
   mes        text not null,               -- formato 'YYYY-MM'
   renda      numeric(12,2) not null default 0,
-  -- Marca que as contas fixas já foram lançadas neste mês. Sem isso, apagar
-  -- uma conta fixa de um mês faria ela reaparecer na próxima abertura.
-  fixos_gerados boolean not null default false,
   created_at timestamptz not null default now(),
   unique (user_id, mes)
 );
 
--- ---------- ENTRADAS EXTRAS
+-- ---------- CONTAS FIXAS DISPENSADAS
+create policy "pul_select" on public.fixos_pulados for select using (auth.uid() = user_id);
+create policy "pul_insert" on public.fixos_pulados for insert with check (auth.uid() = user_id);
+create policy "pul_delete" on public.fixos_pulados for delete using (auth.uid() = user_id);
+
+-- ENTRADAS EXTRAS
 create policy "ent_select" on public.entradas for select using (auth.uid() = user_id);
 create policy "ent_insert" on public.entradas for insert with check (auth.uid() = user_id);
 create policy "ent_update" on public.entradas for update using (auth.uid() = user_id) with check (auth.uid() = user_id);
@@ -53,6 +55,19 @@ create table if not exists public.fixos (
   dia          int not null default 1,
   ativo        boolean not null default true,
   created_at   timestamptz not null default now()
+);
+
+-- ---------- CONTAS FIXAS DISPENSADAS NUM MÊS ----------
+-- Quando um lançamento gerado por conta fixa é apagado, registramos aqui.
+-- É o que impede a conta de ressuscitar na próxima vez que o mês for aberto,
+-- sem precisar bloquear o mês inteiro para novas contas fixas.
+create table if not exists public.fixos_pulados (
+  id         uuid primary key default gen_random_uuid(),
+  user_id    uuid not null default auth.uid() references auth.users(id) on delete cascade,
+  fixo_id    uuid not null references public.fixos(id) on delete cascade,
+  mes        text not null,
+  created_at timestamptz not null default now(),
+  unique (user_id, fixo_id, mes)
 );
 
 -- ---------- ENTRADAS EXTRAS ----------
@@ -115,6 +130,7 @@ alter table public.gastos     enable row level security;
 alter table public.analises   enable row level security;
 alter table public.fixos      enable row level security;
 alter table public.entradas   enable row level security;
+alter table public.fixos_pulados enable row level security;
 
 -- CATEGORIAS
 create policy "cat_select" on public.categorias for select using (auth.uid() = user_id);
