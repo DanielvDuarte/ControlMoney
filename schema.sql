@@ -25,8 +25,28 @@ create table if not exists public.meses (
   user_id    uuid not null default auth.uid() references auth.users(id) on delete cascade,
   mes        text not null,               -- formato 'YYYY-MM'
   renda      numeric(12,2) not null default 0,
+  -- Marca que as contas fixas já foram lançadas neste mês. Sem isso, apagar
+  -- uma conta fixa de um mês faria ela reaparecer na próxima abertura.
+  fixos_gerados boolean not null default false,
   created_at timestamptz not null default now(),
   unique (user_id, mes)
+);
+
+-- ---------- CONTAS FIXAS (modelo que se repete todo mês) ----------
+-- Guarda o molde, não os lançamentos: ao abrir um mês pela primeira vez, o
+-- app cria um gasto para cada conta fixa ativa. Assim não é preciso gerar
+-- parcelas até o infinito, e parar uma conta fixa não mexe no passado.
+-- O molde não guarda valor: cada mês nasce zerado e é preenchido com o que a
+-- conta trouxe de fato.
+create table if not exists public.fixos (
+  id           uuid primary key default gen_random_uuid(),
+  user_id      uuid not null default auth.uid() references auth.users(id) on delete cascade,
+  nome         text not null,
+  categoria_id uuid references public.categorias(id) on delete set null,
+  subcategoria text not null default '',
+  dia          int not null default 1,
+  ativo        boolean not null default true,
+  created_at   timestamptz not null default now()
 );
 
 -- ---------- ANÁLISES (texto colado de volta do Claude) ----------
@@ -55,12 +75,16 @@ create table if not exists public.gastos (
   fitid          text,                     -- id da transação no OFX (evita importar 2x)
   observacao     text not null default '',
   data           date,                     -- dia em que o gasto aconteceu
+  fixo_id        uuid references public.fixos(id) on delete set null,
   created_at     timestamptz not null default now()
 );
 
 create index if not exists gastos_user_mes_idx on public.gastos (user_id, mes);
 create index if not exists gastos_grupo_idx     on public.gastos (grupo_parcela);
 create index if not exists gastos_fitid_idx     on public.gastos (user_id, fitid);
+-- Trava contra duplicata quando dois aparelhos abrem o mesmo mês ao mesmo
+-- tempo. Gastos comuns têm fixo_id nulo, e nulos não colidem entre si.
+create unique index if not exists gastos_fixo_mes_idx on public.gastos (user_id, mes, fixo_id);
 
 -- ============================================================
 --  Row Level Security — cada usuário só enxerga o que é seu
@@ -69,6 +93,7 @@ alter table public.categorias enable row level security;
 alter table public.meses      enable row level security;
 alter table public.gastos     enable row level security;
 alter table public.analises   enable row level security;
+alter table public.fixos      enable row level security;
 
 -- CATEGORIAS
 create policy "cat_select" on public.categorias for select using (auth.uid() = user_id);
@@ -81,6 +106,12 @@ create policy "mes_select" on public.meses for select using (auth.uid() = user_i
 create policy "mes_insert" on public.meses for insert with check (auth.uid() = user_id);
 create policy "mes_update" on public.meses for update using (auth.uid() = user_id) with check (auth.uid() = user_id);
 create policy "mes_delete" on public.meses for delete using (auth.uid() = user_id);
+
+-- CONTAS FIXAS
+create policy "fix_select" on public.fixos for select using (auth.uid() = user_id);
+create policy "fix_insert" on public.fixos for insert with check (auth.uid() = user_id);
+create policy "fix_update" on public.fixos for update using (auth.uid() = user_id) with check (auth.uid() = user_id);
+create policy "fix_delete" on public.fixos for delete using (auth.uid() = user_id);
 
 -- ANÁLISES
 create policy "ana_select" on public.analises for select using (auth.uid() = user_id);

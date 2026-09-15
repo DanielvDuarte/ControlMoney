@@ -14,6 +14,12 @@ No ar em **https://danielvduarte.github.io/ControlMoney/**
 - Login por e-mail/senha ou conta Google; cada usuário só vê os próprios dados (RLS no Postgres).
 - Gastos por categoria e subcategoria (criáveis na hora, e apagáveis pelo
   botão de categorias no cabeçalho).
+- **Contas fixas** (água, luz, internet, aluguel): marque "Repetir todo mês" ao
+  lançar e todo mês novo já nasce com ela — **zerada**, marcada como
+  "a preencher", para você registrar o que a conta trouxe de fato em vez de
+  herdar um valor antigo. Ao encerrar uma (comprou a casa, acabou o aluguel), o
+  histórico fica intacto e o app se oferece para limpar os lançamentos futuros
+  ainda não pagos.
 - Parcelamento em N meses, com duas formas: **repetir** o valor todo mês
   (aluguel, assinatura) ou **dividir** um total em N parcelas (compra em 3x) —
   aí a última parcela absorve a sobra dos centavos.
@@ -166,7 +172,8 @@ src/
 ## Modelo de dados
 
 - `categorias(id, user_id, nome, cor, subs[])` — subcategorias ficam no array `subs`.
-- `meses(id, user_id, mes 'YYYY-MM', renda)` — uma linha por mês, guarda a renda.
+- `meses(id, user_id, mes 'YYYY-MM', renda, fixos_gerados)` — uma linha por mês,
+  guarda a renda e se as contas fixas já foram lançadas ali.
 - `gastos(id, user_id, mes, nome, valor, categoria_id, subcategoria, pago,
   grupo_parcela, parcela_atual, total_parcelas, fitid, observacao, data)` —
   parcelas compartilham `grupo_parcela`; `fitid` é o id da transação no OFX,
@@ -174,6 +181,9 @@ src/
   sendo o mês a que ele pertence).
 - `analises(id, user_id, mes, texto)` — a análise que você colou de volta do
   Claude, uma por mês.
+- `fixos(id, user_id, nome, categoria_id, subcategoria, dia, ativo)` — o molde
+  das contas fixas, sem valor: cada mês nasce zerado. Os lançamentos ficam em
+  `gastos`, amarrados por `gastos.fixo_id`.
 
 ## Apêndice: publicar no Cloudflare Pages (repo privado)
 

@@ -351,6 +351,47 @@ distribuição dos gastos ao longo do mês.
 Linhas antigas ficam com `data` nula e vão para o fim da lista
 (`nullsFirst: false`), sem quebrar nada.
 
+## Contas fixas
+
+Conta fixa não é parcelamento: não tem fim, e o valor varia (água e luz mudam
+todo mês; aluguel não). Por isso ela **não** gera parcelas adiantadas — não
+existe "infinitas parcelas".
+
+O que existe é um **molde** na tabela `fixos`. Quando um mês é aberto pela
+primeira vez, `gerarFixos()` cria um gasto para cada molde ativo e marca
+`meses.fixos_gerados`. Os lançamentos ficam amarrados ao molde por
+`gastos.fixo_id`.
+
+Três detalhes que sustentam o desenho:
+
+- **O sinalizador `fixos_gerados` é o que permite apagar.** Sem ele, apagar a
+  conta de luz de um mês a faria ressuscitar na próxima abertura, e não haveria
+  como se livrar dela.
+- **Índice único `(user_id, mes, fixo_id)`** protege contra o celular e o
+  computador abrindo o mesmo mês ao mesmo tempo: o segundo `upsert` com
+  `ignoreDuplicates` não cria nada. Gastos comuns têm `fixo_id` nulo, e no
+  Postgres nulos não colidem entre si, então o índice não atrapalha o resto.
+- **Parar uma conta fixa não mexe no passado.** A FK é `on delete set null`:
+  os lançamentos já feitos continuam, só perdem o selo. Existe também um
+  `ativo` para pausar sem apagar — útil para algo suspenso por uns meses.
+- **Meses futuros já abertos são o caso traiçoeiro.** Quem navegou até dezembro
+  em algum momento já tem o lançamento criado lá, e parar o modelo não alcança
+  isso. Por isso `removerFixo()` procura lançamentos daquele molde em meses
+  posteriores ao aberto **e ainda não pagos**, lista os meses e pergunta se
+  devem ir junto. Pagos nunca são tocados: são fato consumado.
+
+**O molde não guarda valor, e isso é deliberado.** Água e luz mudam todo mês;
+aluguel muda com reajuste; qualquer conta muda se for paga com atraso e juros.
+Um valor herdado seria preenchido de véspera e passaria batido justamente nos
+meses em que veio diferente — o registro ficaria bonito e errado. Por isso o
+lançamento nasce em `R$ 0,00`, e a lista mostra um selo **a preencher** no
+lugar do valor, que abre a edição ao ser tocado. Um mês com pendências fica
+visível de relance.
+
+O lançamento do mês é um gasto comum: editá-lo não altera o molde, e alterar o
+molde não reescreve meses já abertos. O histórico é registro do que aconteceu,
+não uma projeção recalculável.
+
 ## Rotina de manutenção
 
 **Alterar o app:** edite, `git push`, e o deploy sai sozinho em ~1 minuto.

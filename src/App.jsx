@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
-import { Plus, Check, Trash2, ChevronLeft, ChevronRight, X, Pencil, AlertCircle, Wallet, LogOut, Tags, Sparkles, Copy, ExternalLink, Upload, Download, Share, Sun, Moon, CloudOff, RefreshCw } from "lucide-react";
+import { Plus, Check, Trash2, ChevronLeft, ChevronRight, X, Pencil, AlertCircle, Wallet, LogOut, Tags, Sparkles, Copy, ExternalLink, Upload, Download, Share, Sun, Moon, CloudOff, RefreshCw, Repeat, Pause, Play } from "lucide-react";
 import { supabase } from "./lib/supabase";
 
 // ---------- helpers ----------
@@ -272,6 +272,8 @@ function Painel({ usuario }) {
   const [modalCategorias, setModalCategorias] = useState(false);
   const [modalAnalise, setModalAnalise] = useState(false);
   const [modalImportar, setModalImportar] = useState(false);
+  const [modalFixos, setModalFixos] = useState(false);
+  const [fixos, setFixos] = useState([]);
   const [erroGlobal, setErroGlobal] = useState("");
   const [falhaRede, setFalhaRede] = useState(false);
   const [offline, setOffline] = useState(() => !navigator.onLine);
@@ -287,6 +289,38 @@ function Painel({ usuario }) {
     setCategorias(data || []);
   }, []);
 
+  const carregarFixos = useCallback(async () => {
+    const { data } = await supabase.from("fixos").select("*").order("created_at");
+    setFixos(data || []);
+  }, []);
+
+  // Lança as contas fixas ativas num mês e marca o mês como gerado.
+  // Devolve true se criou alguma coisa, para o chamador recarregar a lista.
+  const gerarFixos = useCallback(async (mes) => {
+    const { data: ativos } = await supabase.from("fixos").select("*").eq("ativo", true);
+    let criou = false;
+    if (ativos?.length) {
+      // Nasce com valor zero de propósito: água e luz mudam todo mês, e um
+      // valor herdado passaria batido justamente quando veio diferente —
+      // atraso com juros, reajuste, consumo fora do padrão.
+      const linhas = ativos.map(f => ({
+        user_id: usuario.id, mes, fixo_id: f.id,
+        nome: f.nome, valor: 0,
+        categoria_id: f.categoria_id, subcategoria: f.subcategoria || "",
+        data: diaEm(mes, f.dia), pago: false,
+      }));
+      // `ignoreDuplicates` + índice único (user_id, mes, fixo_id): se outro
+      // aparelho abriu o mesmo mês ao mesmo tempo, nada é duplicado.
+      const { error } = await supabase.from("gastos")
+        .upsert(linhas, { onConflict: "user_id,mes,fixo_id", ignoreDuplicates: true });
+      criou = !error;
+    }
+    // Só o sinalizador; `renda` fica intacta na linha que já existir.
+    await supabase.from("meses")
+      .upsert({ user_id: usuario.id, mes, fixos_gerados: true }, { onConflict: "user_id,mes" });
+    return criou;
+  }, [usuario.id]);
+
   // ---------- carregar dados do mês ----------
   const carregarMes = useCallback(async (mes) => {
     setCarregando(true);
@@ -294,11 +328,24 @@ function Painel({ usuario }) {
       const [g, r, a] = await Promise.all([
         supabase.from("gastos").select("*").eq("mes", mes)
           .order("data", { ascending: true, nullsFirst: false }).order("created_at"),
-        supabase.from("meses").select("renda").eq("mes", mes).maybeSingle(),
+        supabase.from("meses").select("renda, fixos_gerados").eq("mes", mes).maybeSingle(),
         supabase.from("analises").select("texto").eq("mes", mes).maybeSingle(),
       ]);
       if (g.error || r.error || a.error) throw (g.error || r.error || a.error);
-      setGastos(g.data || []);
+
+      // Primeira vez que este mês é aberto: lança as contas fixas ativas.
+      // O sinalizador em `meses` garante que isso aconteça uma única vez —
+      // senão, apagar uma conta fixa do mês a faria ressuscitar.
+      let linhas = g.data || [];
+      if (!r.data?.fixos_gerados) {
+        const criou = await gerarFixos(mes);
+        if (criou) {
+          const novo = await supabase.from("gastos").select("*").eq("mes", mes)
+            .order("data", { ascending: true, nullsFirst: false }).order("created_at");
+          if (!novo.error) linhas = novo.data || [];
+        }
+      }
+      setGastos(linhas);
       setRenda(Number(r.data?.renda || 0));
       setAnalise(a.data?.texto || null);
       setFalhaRede(false);
@@ -311,7 +358,7 @@ function Painel({ usuario }) {
     }
   }, []);
 
-  useEffect(() => { carregarCategorias(); }, [carregarCategorias]);
+  useEffect(() => { carregarCategorias(); carregarFixos(); }, [carregarCategorias, carregarFixos]);
   useEffect(() => { carregarMes(mesAtual); }, [mesAtual, carregarMes]);
 
   // Quando a conexão volta, recarrega sozinho — sem exigir toque nenhum.
@@ -427,7 +474,7 @@ function Painel({ usuario }) {
   };
 
   const salvarGasto = async (form) => {
-    const { nome, valor, valorUltima, categoria, subcategoria, observacao, data, parcelas } = form;
+    const { nome, valor, valorUltima, categoria, subcategoria, observacao, data, parcelas, fixo } = form;
     const dia = diaDe(data);
     const cat = await garantirCategoria(categoria);
     if (subcategoria) await registrarSub(cat, subcategoria);
@@ -470,6 +517,14 @@ function Painel({ usuario }) {
       fechar(); carregarMes(mesAtual); return;
     }
 
+    // "Repetir todo mês" cria o modelo; o lançamento deste mês vem logo abaixo,
+    // como qualquer outro, já amarrado a ele.
+    let fixoId = null;
+    if (fixo && n === 1) {
+      const novo = await criarFixo({ nome, categoria_id: cat.id, subcategoria, dia });
+      fixoId = novo?.id || null;
+    }
+
     const grupo = n > 1 ? crypto.randomUUID() : null;
     const linhas = Array.from({ length: n }, (_, i) => ({
       user_id: usuario.id,
@@ -479,6 +534,7 @@ function Painel({ usuario }) {
       valor: i === n - 1 ? Number(valorUltima ?? valor) : Number(valor),
       data: diaEm(addMeses(mesAtual, i), dia),
       categoria_id: cat.id, subcategoria: subcategoria || "", observacao: observacao || "",
+      fixo_id: i === 0 ? fixoId : null,
       pago: false, grupo_parcela: grupo,
       parcela_atual: n > 1 ? i + 1 : null,
       total_parcelas: n > 1 ? n : null,
@@ -556,6 +612,49 @@ function Painel({ usuario }) {
     await carregarMes(mesAtual);
   };
 
+  const criarFixo = async ({ nome, categoria_id, subcategoria, dia }) => {
+    const { data } = await supabase.from("fixos").insert({
+      user_id: usuario.id, nome,
+      categoria_id: categoria_id || null, subcategoria: subcategoria || "", dia,
+    }).select().single();
+    await carregarFixos();
+    return data;
+  };
+
+  const alterarFixo = async (id, campos) => {
+    await supabase.from("fixos").update(campos).eq("id", id);
+    await carregarFixos();
+  };
+
+  const removerFixo = async (f) => {
+    if (!window.confirm(
+      `Parar a conta fixa "${f.nome}"?\n\n` +
+      `Ela deixa de ser lançada daqui em diante. Os lançamentos já feitos ` +
+      `continuam onde estão — nada some do histórico.`
+    )) return;
+
+    // Meses futuros que já foram abertos alguma vez já têm o lançamento
+    // criado; parar o modelo não os alcança. Oferecemos limpar só os que
+    // ainda não foram pagos, e só depois do mês aberto.
+    const { data: futuros } = await supabase.from("gastos")
+      .select("id, mes").eq("fixo_id", f.id).eq("pago", false).gt("mes", mesAtual);
+
+    if (futuros?.length) {
+      const meses = [...new Set(futuros.map(g => g.mes))].sort();
+      const lista = meses.map(m => { const p = parseKey(m); return `${MESES[p.m]}/${p.y}`; }).join(", ");
+      if (window.confirm(
+        `"${f.nome}" já está lançado em ${meses.length} mês${meses.length > 1 ? "es" : ""} à frente: ${lista}.\n\n` +
+        `OK = apagar também esses lançamentos futuros.\nCancelar = deixar como estão.`
+      )) {
+        await supabase.from("gastos").delete().in("id", futuros.map(g => g.id));
+      }
+    }
+
+    await supabase.from("fixos").delete().eq("id", f.id);
+    await carregarFixos();
+    carregarMes(mesAtual);
+  };
+
   const abrirNovo = () => { setEditando(null); setModalGasto(true); };
   const abrirEdicao = (g) => { setErroGlobal(""); setEditando({ ...g, categoriaNome: catPorId[g.categoria_id]?.nome }); setModalGasto(true); };
   const fechar = () => { setModalGasto(false); setEditando(null); };
@@ -608,9 +707,14 @@ function Painel({ usuario }) {
         </button>
 
 
-        <button style={S.btnImportar} onClick={() => setModalImportar(true)}>
-          <Upload size={14} /> Importar extrato do banco (OFX)
-        </button>
+        <div style={S.linhaSecundaria}>
+          <button style={S.btnSecundario} onClick={() => setModalFixos(true)}>
+            <Repeat size={14} /> Contas fixas{fixos.length ? ` (${fixos.length})` : ""}
+          </button>
+          <button style={S.btnSecundario} onClick={() => setModalImportar(true)}>
+            <Upload size={14} /> Importar OFX
+          </button>
+        </div>
 
         <main style={S.lista}>
           {carregando ? (
@@ -641,7 +745,12 @@ function Painel({ usuario }) {
                         {g.pago && <Check size={14} strokeWidth={3} color="var(--fundo)" />}
                       </button>
                       <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={S.itemNome}>{g.nome}{g.total_parcelas > 1 && <span style={S.parcela}>{g.parcela_atual}/{g.total_parcelas}</span>}</div>
+                        <div style={S.itemNome}>
+                          {/* Só o nome trunca; os selos nunca são comidos por ele. */}
+                          <span style={S.itemNomeTexto}>{g.nome}</span>
+                          {g.total_parcelas > 1 && <span style={S.parcela}>{g.parcela_atual}/{g.total_parcelas}</span>}
+                          {g.fixo_id && <span style={S.seloFixa} title="Conta fixa, lançada automaticamente">fixa</span>}
+                        </div>
                         {(g.data || g.subcategoria) && (
                           <div style={S.itemSub}>
                             {g.data && <span style={S.itemData}>{ddmm(g.data)}</span>}
@@ -651,7 +760,11 @@ function Painel({ usuario }) {
                         )}
                         {g.observacao && <div style={S.itemObs}>{g.observacao}</div>}
                       </div>
-                      <div style={{ ...S.itemValor, color: g.pago ? "var(--verde-claro)" : "var(--texto)" }}>{brl(g.valor)}</div>
+                      {Number(g.valor) === 0 ? (
+                        <button style={S.aPreencher} onClick={() => abrirEdicao(g)}>a preencher</button>
+                      ) : (
+                        <div style={{ ...S.itemValor, color: g.pago ? "var(--verde-claro)" : "var(--texto)" }}>{brl(g.valor)}</div>
+                      )}
                       <button style={S.iconBtn} onClick={() => abrirEdicao(g)} aria-label="Editar"><Pencil size={14} /></button>
                       <button style={S.iconBtn} onClick={() => removerGasto(g)} aria-label="Remover"><Trash2 size={14} /></button>
                     </div>
@@ -675,6 +788,8 @@ function Painel({ usuario }) {
         onSalvar={salvarAnalise} onApagar={apagarAnalise} />}
       {modalImportar && <ModalImportar categorias={categorias} onFechar={() => setModalImportar(false)}
         onPreparar={prepararImportacao} onImportar={importarGastos} />}
+      {modalFixos && <ModalFixos fixos={fixos} categorias={categorias} onFechar={() => setModalFixos(false)}
+        onAlterar={alterarFixo} onRemover={removerFixo} />}
     </Tela>
   );
 }
@@ -694,6 +809,62 @@ function ModalRenda({ valor, onFechar, onSalvar }) {
       <div style={S.modalAcoes}>
         <button style={S.btnSec} onClick={onFechar}>Cancelar</button>
         <button style={S.btnPri} onClick={() => onSalvar(v)}>Salvar</button>
+      </div>
+    </Overlay>
+  );
+}
+
+function ModalFixos({ fixos, categorias, onFechar, onAlterar, onRemover }) {
+  const nomeCat = (id) => categorias.find(c => c.id === id)?.nome || "Sem categoria";
+
+  return (
+    <Overlay onFechar={onFechar}>
+      <h2 style={S.modalTitulo}>Contas fixas</h2>
+      <p style={S.modalAjuda}>
+        Lançadas sozinhas a cada mês novo, com valor zerado — você preenche o
+        que a conta trouxe, para nenhum valor antigo passar batido.
+      </p>
+
+      {fixos.length === 0 ? (
+        <div style={S.catVazio}>
+          Nenhuma ainda. Ao lançar um gasto, marque <b>Repetir todo mês</b> para
+          criar uma.
+        </div>
+      ) : (
+        <div style={S.catLista}>
+          {fixos.map(f => (
+            <div key={f.id} style={{ ...S.fixoLinha, opacity: f.ativo ? 1 : 0.5 }}>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={S.fixoNome}>{f.nome}</div>
+                <div style={S.fixoMeta}>
+                  {nomeCat(f.categoria_id)}{f.subcategoria ? ` · ${f.subcategoria}` : ""}
+                  {!f.ativo && " · pausada"}
+                </div>
+              </div>
+              <span style={S.fixoDiaRotulo}>dia</span>
+              <input type="number" min={1} max={31} style={S.fixoDia} defaultValue={f.dia}
+                aria-label={`Dia de ${f.nome}`}
+                onBlur={e => { const d = Math.min(31, Math.max(1, Number(e.target.value) || 1)); if (d !== f.dia) onAlterar(f.id, { dia: d }); }} />
+              <button style={S.iconBtn} onClick={() => onAlterar(f.id, { ativo: !f.ativo })}
+                aria-label={f.ativo ? `Pausar ${f.nome}` : `Retomar ${f.nome}`}
+                title={f.ativo ? "Pausar" : "Retomar"}>
+                {f.ativo ? <Pause size={14} /> : <Play size={14} />}
+              </button>
+              <button style={S.iconBtn} onClick={() => onRemover(f)} aria-label={`Parar ${f.nome}`}>
+                <Trash2 size={14} />
+              </button>
+            </div>
+          ))}
+          <p style={S.dicaCampo}>
+            <b>Pausar</b> serve para uma interrupção temporária; a <b>lixeira</b>
+            encerra de vez — e, se houver lançamentos em meses à frente ainda não
+            pagos, ela pergunta se quer apagá-los também. O histórico nunca é tocado.
+          </p>
+        </div>
+      )}
+
+      <div style={S.modalAcoes}>
+        <button style={S.btnSec} onClick={onFechar}>Fechar</button>
       </div>
     </Overlay>
   );
@@ -960,6 +1131,7 @@ function ModalGasto({ categorias, mes, editando, erroExterno, onFechar, onSalvar
   });
   const [parcelas, setParcelas] = useState(editando?.total_parcelas || 1);
   const [modo, setModo] = useState("repetir");   // repetir | dividir
+  const [fixo, setFixo] = useState(false);      // repete todo mês, sem fim
   const [erro, setErro] = useState("");
 
   const catFinal = criandoCat ? novaCat.trim() : categoria;
@@ -983,7 +1155,7 @@ function ModalGasto({ categorias, mes, editando, erroExterno, onFechar, onSalvar
     onSalvar({
       nome: nome.trim(), categoria: catFinal,
       subcategoria: criandoSub ? novaSub.trim() : subcategoria,
-      observacao: observacao.trim(), data,
+      observacao: observacao.trim(), data, fixo,
       valor: porMes, valorUltima: ultima, parcelas,
     });
   };
@@ -1042,7 +1214,14 @@ function ModalGasto({ categorias, mes, editando, erroExterno, onFechar, onSalvar
       <textarea style={{ ...S.input, minHeight: 62, resize: "vertical" }} value={observacao}
         onChange={e => setObservacao(e.target.value)} placeholder="Ex: negociado até dezembro, conferir reajuste…" />
 
-      {(
+      {!editando && parcelas === 1 && (
+        <label style={S.caixaFixo}>
+          <input type="checkbox" checked={fixo} onChange={e => setFixo(e.target.checked)} />
+          <b>Repetir todo mês</b>
+        </label>
+      )}
+
+      {!fixo && (
         <>
           <label style={S.label}>Parcelas</label>
           <div style={S.parcelasRow}>
@@ -1286,7 +1465,8 @@ const S = {
 
   item: { display: "flex", alignItems: "center", gap: 11, padding: "11px 13px", borderRadius: 12, border: "1px solid", transition: "background .15s" },
   check: { width: 24, height: 24, borderRadius: 7, border: "2px solid", cursor: "pointer", display: "grid", placeItems: "center", flexShrink: 0, transition: "all .15s" },
-  itemNome: { fontWeight: 600, fontSize: 14.5, display: "flex", alignItems: "center", gap: 7, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" },
+  itemNome: { fontWeight: 600, fontSize: 14.5, display: "flex", alignItems: "center", gap: 7, minWidth: 0 },
+  itemNomeTexto: { whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", minWidth: 0 },
   parcela: { fontSize: 11, fontWeight: 700, color: "var(--fundo)", background: "var(--texto-3)", padding: "1px 6px", borderRadius: 6, flexShrink: 0 },
   itemSub: { fontSize: 12, color: "var(--texto-4)", marginTop: 1 },
   itemData: { fontVariantNumeric: "tabular-nums", color: "var(--texto-3)" },
@@ -1308,6 +1488,18 @@ const S = {
   conviteTitulo: { fontSize: 14, fontWeight: 700, letterSpacing: "-0.01em" },
   conviteTexto: { fontSize: 12, color: "var(--texto-4)", marginTop: 2, lineHeight: 1.45 },
   conviteBtn: { background: "var(--verde)", border: "none", borderRadius: 9, padding: "8px 13px", color: "var(--sobre-verde)", fontSize: 13, fontWeight: 700, cursor: "pointer", flexShrink: 0 },
+
+  linhaSecundaria: { display: "flex", gap: 8, marginTop: -8, marginBottom: 18 },
+  btnSecundario: { flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 6, background: "transparent", border: "1px dashed var(--borda)", borderRadius: 12, padding: "10px 6px", color: "var(--texto-4)", fontSize: 13, fontWeight: 600, cursor: "pointer" },
+  seloFixa: { fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.04em", color: "var(--azul)", background: "color-mix(in srgb, var(--azul) 14%, transparent)", borderRadius: 99, padding: "1px 6px", flexShrink: 0 },
+  caixaFixo: { display: "flex", alignItems: "center", gap: 10, marginTop: 18, background: "var(--recuo)", border: "1px solid var(--borda)", borderRadius: 11, padding: "12px 13px", fontSize: 14, cursor: "pointer" },
+  fixoLinha: { display: "flex", alignItems: "center", gap: 9, border: "1px solid var(--borda)", background: "var(--superficie)", borderRadius: 11, padding: "10px 8px 10px 12px" },
+  fixoNome: { fontSize: 14, fontWeight: 600, overflowWrap: "anywhere" },
+  fixoMeta: { fontSize: 11.5, color: "var(--texto-4)", marginTop: 2 },
+  aPreencher: { fontSize: 11.5, fontWeight: 700, color: "var(--ambar)", background: "color-mix(in srgb, var(--ambar) 13%, transparent)", border: "1px solid color-mix(in srgb, var(--ambar) 30%, transparent)", borderRadius: 99, padding: "3px 9px", cursor: "pointer", whiteSpace: "nowrap", flexShrink: 0 },
+  fixoDiaRotulo: { fontSize: 11.5, color: "var(--texto-5)" },
+  fixoCampo: { width: 78, background: "var(--campo)", border: "1px solid var(--campo-borda)", borderRadius: 8, padding: "6px 8px", color: "var(--texto)", fontSize: 13, fontVariantNumeric: "tabular-nums" },
+  fixoDia: { width: 52, background: "var(--campo)", border: "1px solid var(--campo-borda)", borderRadius: 8, padding: "6px 8px", color: "var(--texto)", fontSize: 13, textAlign: "center" },
 
   btnImportar: { display: "flex", alignItems: "center", justifyContent: "center", gap: 7, width: "100%", marginTop: -8, marginBottom: 18, background: "transparent", border: "1px dashed var(--borda)", borderRadius: 12, padding: "10px", color: "var(--texto-4)", fontSize: 13, fontWeight: 600, cursor: "pointer" },
   dropZone: { display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 6, textAlign: "center", border: "1px dashed var(--borda-2)", borderRadius: 12, padding: "30px 18px", cursor: "pointer", background: "var(--recuo)" },
