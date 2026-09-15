@@ -26,6 +26,9 @@ No ar em **https://danielvduarte.github.io/ControlMoney/**
 - Data do gasto: vem preenchida com hoje e dá para recuar, para quando você
   lembra dias depois. A lista fica ordenada por data.
 - Marcar como pago (fica verde); resumo de pago / falta pagar.
+- Ordenar a lista: **a pagar primeiro** (o padrão — categorias já quitadas
+  descem junto com os itens pagos), por data, por nome ou por maior valor. A
+  escolha fica salva no aparelho.
 - Observação livre por gasto ("negociado até dezembro", "conferir reajuste"),
   que aparece na lista e vai junto no resumo levado ao Claude.
 - Editar um gasto parcelado corrige a série inteira — dá para consertar

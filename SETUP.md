@@ -481,6 +481,25 @@ bico, reembolso, venda. O app calcula `rendaTotal = renda + soma(entradas)`, e
 barra de comprometimento e as porcentagens por categoria. Ao mexer nesse
 cálculo, procure por `rendaTotal`, não por `renda`.
 
+## Ordenação da lista
+
+A lista é agrupada por categoria, e é isso que torna a ordenação menos óbvia
+do que parece: ordenar só os itens dentro de cada grupo não resolveria o
+problema que motivou a funcionalidade — achar o que falta pagar sem rolar a
+tela. Um grupo inteiramente quitado continuaria no meio do caminho.
+
+Por isso `porCategoria` aplica o critério **nos dois níveis**: ordena os itens
+dentro do grupo e os grupos entre si. Em "a pagar primeiro", categorias com
+algo em aberto sobem, ordenadas pelo tamanho do que falta; as já quitadas
+afundam.
+
+O modo `data` mantém a ordem original dos grupos (a de aparição, que vem da
+consulta ordenada por data) usando um comparador que devolve zero — `sort` é
+estável no JavaScript moderno, então isso preserva a ordem em vez de embaralhar.
+
+A escolha vive em `localStorage`, não no banco: é preferência de quem está
+olhando, não dado do mês.
+
 ## Rotina de manutenção
 
 **Alterar o app:** edite, `git push`, e o deploy sai sozinho em ~1 minuto.

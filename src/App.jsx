@@ -270,6 +270,9 @@ function Painel({ usuario }) {
   const [categorias, setCategorias] = useState([]);      // [{id, nome, cor, subs}]
   const [renda, setRenda] = useState(0);
   const [entradas, setEntradas] = useState([]);   // ganhos avulsos do mês
+  const [ordem, setOrdem] = useState(() => {
+    try { return localStorage.getItem("ordem-lista") || "pendentes"; } catch { return "pendentes"; }
+  });
   const [gastos, setGastos] = useState([]);
   const [carregando, setCarregando] = useState(true);
   const [modalGasto, setModalGasto] = useState(false);
@@ -286,6 +289,10 @@ function Painel({ usuario }) {
   const [analise, setAnalise] = useState(null);   // texto colado de volta do Claude
   const [resumo, setResumo] = useState("");       // texto a levar para o Claude
   const { y, m } = parseKey(mesAtual);
+
+  useEffect(() => {
+    try { localStorage.setItem("ordem-lista", ordem); } catch { /* navegação privativa */ }
+  }, [ordem]);
 
   const catPorId = useMemo(() => Object.fromEntries(categorias.map(c => [c.id, c])), [categorias]);
 
@@ -409,14 +416,46 @@ function Painel({ usuario }) {
     return { total, pago, pendente: total - pago, saldo: rendaTotal - total };
   }, [gastos, rendaTotal]);
 
+  // Ordenação da lista. Vale nos dois níveis: dentro de cada categoria e entre
+  // as categorias — senão, em "pendentes primeiro", um grupo todo pago ficaria
+  // no meio da tela e a rolagem continuaria necessária.
   const porCategoria = useMemo(() => {
     const grupos = {};
     gastos.forEach(g => {
       const nome = catPorId[g.categoria_id]?.nome || "Sem categoria";
       (grupos[nome] ||= []).push(g);
     });
-    return grupos;
-  }, [gastos, catPorId]);
+
+    const porData = (a, b) => String(a.data || "9999").localeCompare(String(b.data || "9999"));
+    const dentro = {
+      pendentes: (a, b) => (a.pago === b.pago ? porData(a, b) : a.pago ? 1 : -1),
+      data: porData,
+      nome: (a, b) => a.nome.localeCompare(b.nome, "pt-BR"),
+      valor: (a, b) => Number(b.valor || 0) - Number(a.valor || 0),
+    }[ordem] || porData;
+
+    const lista = Object.entries(grupos).map(([nome, itens]) => {
+      const ordenados = [...itens].sort(dentro);
+      return {
+        nome,
+        itens: ordenados,
+        subtotal: soma(ordenados),
+        pendente: ordenados.some(g => !g.pago),
+      };
+    });
+
+    const entre = {
+      // Grupos com algo em aberto primeiro; entre eles, o maior pendente no topo.
+      pendentes: (a, b) => (a.pendente === b.pendente
+        ? soma(b.itens.filter(g => !g.pago)) - soma(a.itens.filter(g => !g.pago))
+        : a.pendente ? -1 : 1),
+      data: () => 0,
+      nome: (a, b) => a.nome.localeCompare(b.nome, "pt-BR"),
+      valor: (a, b) => b.subtotal - a.subtotal,
+    }[ordem] || (() => 0);
+
+    return lista.sort(entre);
+  }, [gastos, catPorId, ordem]);
 
   // ---------- ações ----------
   const navegarMes = (dir) => setMesAtual(k => addMeses(k, dir));
@@ -828,6 +867,18 @@ function Painel({ usuario }) {
           </button>
         </div>
 
+        {!carregando && gastos.length > 0 && (
+          <div style={S.barraOrdem}>
+            <span style={S.barraOrdemRotulo}>Ordenar por</span>
+            <select style={S.selectOrdem} value={ordem} onChange={e => setOrdem(e.target.value)} aria-label="Ordenar a lista">
+              <option value="pendentes">a pagar primeiro</option>
+              <option value="data">data</option>
+              <option value="nome">nome</option>
+              <option value="valor">maior valor</option>
+            </select>
+          </div>
+        )}
+
         <main style={S.lista}>
           {carregando ? (
             <div style={S.vazio}>Carregando {MESES[m]}…</div>
@@ -837,9 +888,8 @@ function Painel({ usuario }) {
               <p style={{ margin: "6px 0 0", fontSize: 14 }}>Toque em <b>+ Novo gasto</b> para começar.</p>
             </div>
           ) : (
-            Object.entries(porCategoria).map(([cat, itens]) => {
+            porCategoria.map(({ nome: cat, itens, subtotal }) => {
               const cor = categorias.find(c => c.nome === cat)?.cor || "var(--texto-4)";
-              const subtotal = itens.reduce((s, g) => s + Number(g.valor || 0), 0);
               // Sem renda informada não há do que tirar porcentagem.
               const pct = rendaTotal > 0 ? (subtotal / rendaTotal) * 100 : null;
               return (
@@ -1796,6 +1846,10 @@ const S = {
   resumoCard: { background: "var(--modal)", border: "1px solid var(--campo-borda)", borderRadius: 12, padding: "12px 14px", display: "flex", flexDirection: "column", gap: 3 },
   resumoLabel: { fontSize: 11.5, color: "var(--texto-4)" },
   resumoVal: { fontSize: 16, fontWeight: 700, fontVariantNumeric: "tabular-nums" },
+
+  barraOrdem: { display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 7, marginBottom: 10 },
+  barraOrdemRotulo: { fontSize: 12, color: "var(--texto-5)" },
+  selectOrdem: { background: "var(--superficie)", border: "1px solid var(--borda)", borderRadius: 8, padding: "5px 8px", color: "var(--texto-3)", fontSize: 12.5, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" },
 
   lista: { display: "flex", flexDirection: "column", gap: 20 },
   vazio: { textAlign: "center", padding: "48px 20px", color: "var(--texto-4)", border: "1px dashed var(--borda)", borderRadius: 14 },
