@@ -1,6 +1,5 @@
 {
   "name": "ControlMoney — Contas do mês",
-  "short_name": "ControlMoney",
   "description": "Controle de gastos mensais, sincronizado entre celular e computador.",
   "start_url": "./",
   "scope": "./",
