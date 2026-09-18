@@ -26,6 +26,11 @@ No ar em **https://danielvduarte.github.io/ControlMoney/**
 - Data do gasto: vem preenchida com hoje e dá para recuar, para quando você
   lembra dias depois. A lista fica ordenada por data.
 - Marcar como pago (fica verde); resumo de pago / falta pagar.
+- **Nada é apagado por engano**: toda remoção pergunta antes, mostrando valor,
+  data e categoria do que vai sair (e, num gasto parcelado, separando "só esta
+  parcela" de "esta e as próximas"). Logo depois aparece uma tarja de
+  **Desfazer**, e o que saiu fica **30 dias na lixeira** — botão da lata no
+  cabeçalho — de onde dá para restaurar tudo de volta ao mês de origem.
 - Ordenar a lista: **a pagar primeiro** (o padrão — categorias já quitadas
   descem junto com os itens pagos), por data, por nome ou por maior valor. A
   escolha fica salva no aparelho.
@@ -63,6 +68,9 @@ No ar em **https://danielvduarte.github.io/ControlMoney/**
    Isso cria as tabelas, ativa RLS, as policies por usuário e o gatilho que
    cadastra a categoria inicial (Casa) em cada conta nova — o resto você cria
    conforme lança os gastos.
+   Se o banco **já existe** de antes da lixeira, basta rodar o último bloco do
+   `schema.sql` (o que começa em `-- LIXEIRA`): ele é independente do resto e
+   pode ser executado mais de uma vez sem estragar nada.
 3. Em **Project Settings → API Keys**, copie:
    - **Project URL** (em *Data API*) → vai em `VITE_SUPABASE_URL`.
      É só o domínio, sem o `/rest/v1/` do fim.

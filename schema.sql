@@ -184,3 +184,36 @@ drop trigger if exists on_auth_user_created_seed on auth.users;
 create trigger on_auth_user_created_seed
   after insert on auth.users
   for each row execute function public.seed_categorias();
+
+-- ============================================================
+--  LIXEIRA
+--  Nada é apagado direto: a linha inteira é copiada para cá antes de sair
+--  da tabela de origem, e é de lá que ela volta — com o mesmo id, para que
+--  parcelas e vínculos continuem apontando para o lugar certo.
+--  O app faz a faxina sozinho: o que passou de 30 dias sai de vez.
+--
+--  Se o banco já existe, basta rodar deste comentário até o fim do arquivo
+--  no SQL Editor — o resto do schema não muda.
+-- ============================================================
+create table if not exists public.lixeira (
+  id          uuid primary key default gen_random_uuid(),
+  user_id     uuid not null default auth.uid() references auth.users(id) on delete cascade,
+  tabela      text not null,               -- 'gastos' | 'entradas' | 'analises'
+  registro_id uuid not null,               -- id que a linha tinha (e terá de volta)
+  mes         text,                        -- 'YYYY-MM', para mostrar na lista
+  rotulo      text not null default '',    -- nome do gasto / descrição da entrada
+  valor       numeric(12,2) not null default 0,
+  dados       jsonb not null,              -- a linha inteira, como estava
+  removido_em timestamptz not null default now()
+);
+
+create index if not exists lixeira_user_idx on public.lixeira (user_id, removido_em desc);
+
+alter table public.lixeira enable row level security;
+
+drop policy if exists "lix_select" on public.lixeira;
+drop policy if exists "lix_insert" on public.lixeira;
+drop policy if exists "lix_delete" on public.lixeira;
+create policy "lix_select" on public.lixeira for select using (auth.uid() = user_id);
+create policy "lix_insert" on public.lixeira for insert with check (auth.uid() = user_id);
+create policy "lix_delete" on public.lixeira for delete using (auth.uid() = user_id);

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
-import { Plus, Check, Trash2, ChevronLeft, ChevronRight, X, Pencil, AlertCircle, LogOut, Tags, Sparkles, Copy, ExternalLink, Upload, Download, Share, Sun, Moon, CloudOff, RefreshCw, Repeat, Pause, Play, Printer, TrendingUp } from "lucide-react";
+import { Plus, Check, Trash2, ChevronLeft, ChevronRight, X, Pencil, AlertCircle, LogOut, Tags, Sparkles, Copy, ExternalLink, Upload, Download, Share, Sun, Moon, CloudOff, RefreshCw, Repeat, Pause, Play, Printer, TrendingUp, Undo2, RotateCcw } from "lucide-react";
 import { supabase } from "./lib/supabase";
 
 // ---------- helpers ----------
@@ -30,6 +30,42 @@ const soma = (lista) => lista.reduce((s, g) => s + Number(g.valor || 0), 0);
 const chaveDesc = (s = "") => s
   .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
   .toLowerCase().replace(/[^a-z ]+/g, " ").replace(/\s+/g, " ").trim();
+
+// ------------------------------------------------------------
+//  Lixeira
+//  Apagar aqui é em dois tempos: a linha inteira é copiada para `lixeira` e
+//  só então sai da tabela de origem. Voltar é o caminho inverso — e o id
+//  volta junto, então parcelas, extratos já importados e contas fixas
+//  continuam amarrados no mesmo lugar.
+// ------------------------------------------------------------
+const DIAS_LIXEIRA = 30;
+const NOME_TABELA = { gastos: "Gasto", entradas: "Entrada", analises: "Análise" };
+const dataHora = (iso) => new Date(iso).toLocaleString("pt-BR",
+  { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
+
+async function restaurarDaLixeira(item) {
+  const dados = { ...item.dados };
+  let { error } = await supabase.from(item.tabela).insert(dados);
+
+  // A categoria (ou a conta fixa) pode ter sido apagada nesse meio-tempo, e
+  // aí a chave estrangeira recusa a volta. Melhor o lançamento voltar sem a
+  // etiqueta do que não voltar — quem restaurou é avisado.
+  let semVinculo = false;
+  if (error && item.tabela === "gastos") {
+    const r = await supabase.from("gastos").insert({ ...dados, categoria_id: null, fixo_id: null });
+    if (!r.error) semVinculo = true;
+    error = r.error;
+  }
+  if (error) throw new Error(error.message);
+
+  // Era um lançamento de conta fixa: a dispensa daquele mês some junto, senão
+  // o app continuaria achando que essa conta foi descartada ali.
+  if (dados.fixo_id && dados.mes) {
+    await supabase.from("fixos_pulados").delete().eq("fixo_id", dados.fixo_id).eq("mes", dados.mes);
+  }
+  await supabase.from("lixeira").delete().eq("id", item.id);
+  return semVinculo;
+}
 
 // ------------------------------------------------------------
 //  Leitor de OFX
@@ -282,6 +318,10 @@ function Painel({ usuario }) {
   const [modalAnalise, setModalAnalise] = useState(false);
   const [modalImportar, setModalImportar] = useState(false);
   const [modalFixos, setModalFixos] = useState(false);
+  const [modalLixeira, setModalLixeira] = useState(false);
+  const [pergunta, setPergunta] = useState(null);   // confirmação em aberto
+  const respostaRef = useRef(null);                 // resolve() da confirmação
+  const [aviso, setAviso] = useState(null);         // tarja de "desfazer"
   const [fixos, setFixos] = useState([]);
   const [erroGlobal, setErroGlobal] = useState("");
   const [falhaRede, setFalhaRede] = useState(false);
@@ -457,6 +497,67 @@ function Painel({ usuario }) {
     return lista.sort(entre);
   }, [gastos, catPorId, ordem]);
 
+  // ---------- confirmação e lixeira ----------
+  // Pergunta antes de apagar. Dá para usar com `await`, como o window.confirm,
+  // mas sem a caixa cinza do navegador e com mais de duas saídas — é o que
+  // permite separar "só esta parcela" de "esta e as próximas".
+  // Devolve o id da ação escolhida, ou null se a pessoa desistiu.
+  const perguntar = useCallback((cfg) => new Promise(resolver => {
+    respostaRef.current = resolver;
+    setPergunta(cfg);
+  }), []);
+
+  const responder = useCallback((id) => {
+    setPergunta(null);
+    const resolver = respostaRef.current;
+    respostaRef.current = null;
+    resolver?.(id);
+  }, []);
+
+  // Guarda as linhas na lixeira antes de apagá-las. Devolve os ids guardados,
+  // que são o que a tarja de "desfazer" usa para trazer tudo de volta.
+  const paraLixeira = useCallback(async (tabela, linhas, rotulo) => {
+    const lista = (Array.isArray(linhas) ? linhas : [linhas]).filter(Boolean);
+    if (!lista.length) return [];
+    const { data, error } = await supabase.from("lixeira").insert(
+      lista.map(l => ({
+        user_id: usuario.id, tabela, registro_id: l.id, mes: l.mes || null,
+        rotulo: rotulo || l.nome || l.descricao || NOME_TABELA[tabela] || "",
+        valor: Number(l.valor || 0), dados: l,
+      }))
+    ).select("id");
+    // Sem lixeira não se apaga nada: perder o lançamento em silêncio é
+    // exatamente o que esta tela existe para impedir.
+    if (error) throw new Error(
+      `não consegui guardar na lixeira (${error.message}). ` +
+      `Se o banco é antigo, rode o trecho da LIXEIRA do schema.sql no Supabase.`
+    );
+    return data.map(r => r.id);
+  }, [usuario.id]);
+
+  const avisarDesfazer = (texto, ids) => setAviso({ texto, ids });
+
+  const desfazerRemocao = async () => {
+    const ids = aviso?.ids || [];
+    setAviso(null);
+    if (!ids.length) return;
+    const { data } = await supabase.from("lixeira").select("*").in("id", ids);
+    try {
+      for (const item of data || []) await restaurarDaLixeira(item);
+    } catch (e) {
+      setAviso({ texto: "Não consegui restaurar: " + (e?.message || e), ids: [] });
+    }
+    await carregarCategorias();
+    carregarMes(mesAtual);
+  };
+
+  // A tarja some sozinha; quem perdeu a janela ainda acha tudo na lixeira.
+  useEffect(() => {
+    if (!aviso) return;
+    const t = setTimeout(() => setAviso(null), 9000);
+    return () => clearTimeout(t);
+  }, [aviso]);
+
   // ---------- ações ----------
   const navegarMes = (dir) => setMesAtual(k => addMeses(k, dir));
 
@@ -476,8 +577,25 @@ function Painel({ usuario }) {
   };
 
   const removerEntrada = async (e) => {
-    if (!window.confirm(`Remover a entrada "${e.descricao || brl(e.valor)}"?`)) return;
-    await supabase.from("entradas").delete().eq("id", e.id);
+    const escolha = await perguntar({
+      titulo: "Remover esta entrada?",
+      texto: `${e.descricao || "Entrada avulsa"} — ${brl(e.valor)}${e.data ? ` · ${ddmm(e.data)}` : ""}.`,
+      nota: `Vai para a lixeira e pode voltar de lá por ${DIAS_LIXEIRA} dias.`,
+      acoes: [{ id: "remover", rotulo: "Remover", tom: "perigo" }],
+    });
+    if (escolha !== "remover") return;
+    let ids = [];
+    try {
+      ids = await paraLixeira("entradas", e);
+      const { error } = await supabase.from("entradas").delete().eq("id", e.id);
+      if (error) throw error;
+      avisarDesfazer(`Entrada "${e.descricao || brl(e.valor)}" removida`, ids);
+    } catch (err) {
+      // A cópia entrou na lixeira mas o original não saiu: desfazemos a cópia,
+      // senão sobraria um registro duplicado, impossível de restaurar.
+      if (ids.length) await supabase.from("lixeira").delete().in("id", ids);
+      setAviso({ texto: "Não consegui remover: " + (err?.message || err), ids: [] });
+    }
     await carregarMes(mesAtual);
   };
 
@@ -487,26 +605,58 @@ function Painel({ usuario }) {
   };
 
   const removerGasto = async (g) => {
-    if (g.grupo_parcela && g.total_parcelas > 1) {
-      const futuras = window.confirm(
-        `"${g.nome}" é parcelado (${g.parcela_atual}/${g.total_parcelas}).\n\n` +
-        `OK = remover esta e as próximas parcelas.\nCancelar = remover só esta.`
-      );
-      if (futuras) {
-        await supabase.from("gastos").delete().eq("grupo_parcela", g.grupo_parcela).gte("mes", mesAtual);
-        carregarMes(mesAtual);
-        return;
+    const parcelado = g.grupo_parcela && g.total_parcelas > 1;
+    const detalhe = [
+      brl(g.valor),
+      g.data ? ddmm(g.data) : "",
+      catPorId[g.categoria_id]?.nome || "",
+      g.fixo_id ? "conta fixa" : "",
+    ].filter(Boolean).join(" · ");
+
+    const escolha = await perguntar({
+      titulo: `Remover "${g.nome}"?`,
+      texto: parcelado
+        ? `Parcela ${g.parcela_atual} de ${g.total_parcelas} — ${detalhe}.`
+        : detalhe,
+      nota: `Vai para a lixeira e pode voltar de lá por ${DIAS_LIXEIRA} dias.`,
+      acoes: parcelado
+        ? [{ id: "esta", rotulo: "Só esta parcela", tom: "perigo" },
+           { id: "futuras", rotulo: "Esta e as próximas", tom: "perigo" }]
+        : [{ id: "esta", rotulo: "Remover", tom: "perigo" }],
+    });
+    if (!escolha) return;
+
+    let alvos = [g];
+    if (escolha === "futuras") {
+      const { data } = await supabase.from("gastos").select("*")
+        .eq("grupo_parcela", g.grupo_parcela).gte("mes", mesAtual);
+      if (data?.length) alvos = data;
+    }
+
+    let ids = [];
+    try {
+      ids = await paraLixeira("gastos", alvos);
+      // Apagar um lançamento de conta fixa vale para aquele mês: registramos a
+      // dispensa para ele não voltar na próxima abertura.
+      const deFixa = alvos.filter(a => a.fixo_id);
+      if (deFixa.length) {
+        await supabase.from("fixos_pulados").upsert(
+          deFixa.map(a => ({ user_id: usuario.id, fixo_id: a.fixo_id, mes: a.mes })),
+          { onConflict: "user_id,fixo_id,mes", ignoreDuplicates: true });
       }
+      setGastos(gs => gs.filter(x => !alvos.some(a => a.id === x.id))); // otimista
+      const { error } = await supabase.from("gastos").delete().in("id", alvos.map(a => a.id));
+      if (error) throw error;
+      avisarDesfazer(
+        alvos.length > 1 ? `${alvos.length} parcelas de "${g.nome}" removidas` : `"${g.nome}" removido`,
+        ids);
+    } catch (err) {
+      // A cópia entrou na lixeira mas o original não saiu: desfazemos a cópia,
+      // senão sobraria um registro duplicado, impossível de restaurar.
+      if (ids.length) await supabase.from("lixeira").delete().in("id", ids);
+      setAviso({ texto: "Não consegui remover: " + (err?.message || err), ids: [] });
     }
-    // Apagar um lançamento de conta fixa vale para este mês: registramos a
-    // dispensa para ele não voltar na próxima abertura.
-    if (g.fixo_id) {
-      await supabase.from("fixos_pulados")
-        .upsert({ user_id: usuario.id, fixo_id: g.fixo_id, mes: g.mes },
-                { onConflict: "user_id,fixo_id,mes", ignoreDuplicates: true });
-    }
-    setGastos(gs => gs.filter(x => x.id !== g.id));
-    await supabase.from("gastos").delete().eq("id", g.id);
+    carregarMes(mesAtual);
   };
 
   const garantirCategoria = async (nome, corSugerida) => {
@@ -576,22 +726,27 @@ function Painel({ usuario }) {
   const removerCategoria = async (cat) => {
     const { count } = await supabase.from("gastos")
       .select("id", { count: "exact", head: true }).eq("categoria_id", cat.id);
-    const aviso = count
-      ? `"${cat.nome}" está em ${count} gasto${count > 1 ? "s" : ""}.\n\n` +
-        `Apagando a categoria, esses gastos continuam existindo, mas passam a ` +
-        `aparecer como "Sem categoria".\n\nApagar mesmo assim?`
-      : `Apagar a categoria "${cat.nome}"?`;
-    if (!window.confirm(aviso)) return;
+    const escolha = await perguntar({
+      titulo: `Apagar a categoria "${cat.nome}"?`,
+      texto: count
+        ? `Ela está em ${count} gasto${count > 1 ? "s" : ""}. Esses gastos continuam ` +
+          `existindo, com os mesmos valores — passam a aparecer como "Sem categoria".`
+        : "Ela não está em nenhum gasto.",
+      acoes: [{ id: "apagar", rotulo: "Apagar", tom: "perigo" }],
+    });
+    if (escolha !== "apagar") return;
     await supabase.from("categorias").delete().eq("id", cat.id);
     await carregarCategorias();
     carregarMes(mesAtual);
   };
 
   const removerSub = async (cat, sub) => {
-    if (!window.confirm(
-      `Remover a subcategoria "${sub}" de ${cat.nome}?\n\n` +
-      `Ela some da lista de opções. Gastos já lançados com esse nome não mudam.`
-    )) return;
+    const escolha = await perguntar({
+      titulo: `Remover a subcategoria "${sub}"?`,
+      texto: `Ela some da lista de opções de ${cat.nome}. Gastos já lançados com esse nome não mudam.`,
+      acoes: [{ id: "remover", rotulo: "Remover", tom: "perigo" }],
+    });
+    if (escolha !== "remover") return;
     const novas = (cat.subs || []).filter(s => s !== sub);
     await supabase.from("categorias").update({ subs: novas }).eq("id", cat.id);
     await carregarCategorias();
@@ -714,9 +869,23 @@ function Painel({ usuario }) {
   };
 
   const apagarAnalise = async () => {
-    if (!window.confirm("Apagar a análise guardada deste mês?")) return;
-    await supabase.from("analises").delete().eq("mes", mesAtual);
-    setAnalise(null);
+    const escolha = await perguntar({
+      titulo: "Apagar a análise guardada deste mês?",
+      texto: `O texto vai para a lixeira e pode voltar de lá por ${DIAS_LIXEIRA} dias.`,
+      acoes: [{ id: "apagar", rotulo: "Apagar", tom: "perigo" }],
+    });
+    if (escolha !== "apagar") return;
+    try {
+      const { data: guardada } = await supabase.from("analises").select("*").eq("mes", mesAtual).maybeSingle();
+      const ids = guardada
+        ? await paraLixeira("analises", guardada, `Análise de ${MESES[m]}/${y}`)
+        : [];
+      await supabase.from("analises").delete().eq("mes", mesAtual);
+      setAnalise(null);
+      if (ids.length) avisarDesfazer(`Análise de ${MESES[m]}/${y} apagada`, ids);
+    } catch (err) {
+      setAviso({ texto: "Não consegui apagar: " + (err?.message || err), ids: [] });
+    }
   };
 
   // Enriquece as transações lidas do arquivo: marca as que já foram importadas
@@ -773,26 +942,44 @@ function Painel({ usuario }) {
   };
 
   const removerFixo = async (f) => {
-    if (!window.confirm(
-      `Parar a conta fixa "${f.nome}"?\n\n` +
-      `Ela deixa de ser lançada daqui em diante. Os lançamentos já feitos ` +
-      `continuam onde estão — nada some do histórico.`
-    )) return;
+    const escolha = await perguntar({
+      titulo: `Parar a conta fixa "${f.nome}"?`,
+      texto: "Ela deixa de ser lançada daqui em diante. Os lançamentos já feitos " +
+             "continuam onde estão — nada some do histórico.",
+      acoes: [{ id: "parar", rotulo: "Parar", tom: "perigo" }],
+    });
+    if (escolha !== "parar") return;
 
     // Meses futuros que já foram abertos alguma vez já têm o lançamento
     // criado; parar o modelo não os alcança. Oferecemos limpar só os que
     // ainda não foram pagos, e só depois do mês aberto.
     const { data: futuros } = await supabase.from("gastos")
-      .select("id, mes").eq("fixo_id", f.id).eq("pago", false).gt("mes", mesAtual);
+      .select("*").eq("fixo_id", f.id).eq("pago", false).gt("mes", mesAtual);
 
     if (futuros?.length) {
       const meses = [...new Set(futuros.map(g => g.mes))].sort();
       const lista = meses.map(m => { const p = parseKey(m); return `${MESES[p.m]}/${p.y}`; }).join(", ");
-      if (window.confirm(
-        `"${f.nome}" já está lançado em ${meses.length} mês${meses.length > 1 ? "es" : ""} à frente: ${lista}.\n\n` +
-        `OK = apagar também esses lançamentos futuros.\nCancelar = deixar como estão.`
-      )) {
-        await supabase.from("gastos").delete().in("id", futuros.map(g => g.id));
+      const comFuturos = await perguntar({
+        titulo: "E os lançamentos que já estão à frente?",
+        texto: `"${f.nome}" já está lançado em ${meses.length} mês${meses.length > 1 ? "es" : ""} ` +
+               `ainda não pago${meses.length > 1 ? "s" : ""}: ${lista}.`,
+        acoes: [{ id: "manter", rotulo: "Deixar como estão" },
+                { id: "apagar", rotulo: "Apagar também", tom: "perigo" }],
+      });
+      if (comFuturos === "apagar") {
+        const plural = futuros.length > 1;
+        let ids = [];
+        try {
+          ids = await paraLixeira("gastos", futuros);
+          const { error } = await supabase.from("gastos").delete().in("id", futuros.map(g => g.id));
+          if (error) throw error;
+          avisarDesfazer(
+            `${futuros.length} lançamento${plural ? "s" : ""} futuro${plural ? "s" : ""} de "${f.nome}" removido${plural ? "s" : ""}`,
+            ids);
+        } catch (err) {
+          if (ids.length) await supabase.from("lixeira").delete().in("id", ids);
+          setAviso({ texto: "Não consegui remover os futuros: " + (err?.message || err), ids: [] });
+        }
       }
     }
 
@@ -818,6 +1005,8 @@ function Painel({ usuario }) {
             <button style={S.btnNav} onClick={() => navegarMes(1)} aria-label="Próximo mês"><ChevronRight size={18} /></button>
             <BotaoTema />
             <button style={S.btnNav} onClick={() => setModalCategorias(true)} aria-label="Categorias"><Tags size={16} /></button>
+            <button style={S.btnNav} onClick={() => setModalLixeira(true)}
+              aria-label="Lixeira" title="Lixeira — ver e restaurar o que foi apagado"><Trash2 size={16} /></button>
             <button style={S.btnNav} onClick={() => supabase.auth.signOut()} aria-label="Sair"><LogOut size={16} /></button>
           </div>
         </header>
@@ -960,6 +1149,22 @@ function Painel({ usuario }) {
         onPreparar={prepararImportacao} onImportar={importarGastos} />}
       {modalFixos && <ModalFixos fixos={fixos} categorias={categorias} onFechar={() => setModalFixos(false)}
         onAlterar={alterarFixo} onRemover={removerFixo} />}
+      {modalLixeira && <ModalLixeira onFechar={() => setModalLixeira(false)}
+        onPerguntar={perguntar}
+        onMudou={() => { carregarCategorias(); carregarMes(mesAtual); }} />}
+
+      {/* A tarja de desfazer fica acima do botão de novo gasto, e some sozinha. */}
+      {aviso && (
+        <div style={S.tarja} className="nao-imprimir" role="status">
+          <span style={S.tarjaTexto}>{aviso.texto}</span>
+          {aviso.ids.length > 0 && (
+            <button style={S.tarjaBtn} onClick={desfazerRemocao}><Undo2 size={14} /> Desfazer</button>
+          )}
+          <button style={S.tarjaX} onClick={() => setAviso(null)} aria-label="Dispensar"><X size={15} /></button>
+        </div>
+      )}
+
+      {pergunta && <ModalConfirmar {...pergunta} onResponder={responder} />}
     </Tela>
   );
 }
@@ -1570,6 +1775,170 @@ function ModalGasto({ categorias, mes, editando, erroExterno, onCriarCategoria, 
   );
 }
 
+// ------------------------------------------------------------
+//  Caixa de confirmação
+//  Fica por cima de qualquer outro modal (a remoção de entrada acontece
+//  dentro do modal de renda) e aceita mais de duas saídas — é o que separa
+//  "só esta parcela" de "esta e as próximas" sem transformar a pergunta
+//  num quebra-cabeça de OK e Cancelar.
+// ------------------------------------------------------------
+function ModalConfirmar({ titulo, texto, nota, acoes = [], onResponder }) {
+  useEffect(() => {
+    // Na fase de captura e cortando a propagação: o Esc fecha só esta caixa,
+    // não o modal que ficou aberto atrás dela.
+    const onEsc = (e) => {
+      if (e.key !== "Escape") return;
+      e.stopImmediatePropagation();
+      onResponder(null);
+    };
+    window.addEventListener("keydown", onEsc, true);
+    return () => window.removeEventListener("keydown", onEsc, true);
+  }, [onResponder]);
+
+  const empilhado = acoes.length > 1;
+
+  return (
+    <div style={S.overlayConfirma} onClick={() => onResponder(null)}>
+      <div style={S.modalConfirma} onClick={e => e.stopPropagation()} role="alertdialog" aria-modal="true">
+        <div style={S.confirmaIcone}><AlertCircle size={19} /></div>
+        <h2 style={S.confirmaTitulo}>{titulo}</h2>
+        {texto && <p style={S.confirmaTexto}>{texto}</p>}
+        {nota && <p style={S.confirmaNota}>{nota}</p>}
+        <div style={{ ...S.confirmaAcoes, flexDirection: empilhado ? "column" : "row" }}>
+          {acoes.map(a => (
+            <button key={a.id} style={a.tom === "perigo" ? S.btnPerigo : S.btnPri}
+              onClick={() => onResponder(a.id)}>{a.rotulo}</button>
+          ))}
+          {/* O foco começa em Cancelar: Enter sem querer não apaga nada. */}
+          <button style={S.btnSec} onClick={() => onResponder(null)} autoFocus>Cancelar</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ------------------------------------------------------------
+//  Lixeira
+// ------------------------------------------------------------
+function ModalLixeira({ onFechar, onPerguntar, onMudou }) {
+  const [itens, setItens] = useState(null);   // null = ainda carregando
+  const [erro, setErro] = useState("");
+  const [nota, setNota] = useState("");
+  const [ocupado, setOcupado] = useState("");
+
+  const carregar = useCallback(async () => {
+    // Faxina na abertura: o que passou do prazo sai de vez, para a lixeira
+    // não virar um segundo banco de dados.
+    const limite = new Date(Date.now() - DIAS_LIXEIRA * 864e5).toISOString();
+    await supabase.from("lixeira").delete().lt("removido_em", limite);
+
+    const { data, error } = await supabase.from("lixeira").select("*").order("removido_em", { ascending: false });
+    if (error) {
+      setErro(/relation|does not exist|schema cache/i.test(error.message)
+        ? "A tabela da lixeira ainda não existe no banco. Rode o trecho LIXEIRA do schema.sql no SQL Editor do Supabase."
+        : "Não consegui abrir a lixeira: " + error.message);
+      setItens([]);
+      return;
+    }
+    setItens(data || []);
+  }, []);
+
+  useEffect(() => { carregar(); }, [carregar]);
+
+  const rotuloMes = (mes) => { if (!mes) return ""; const p = parseKey(mes); return `${MESES[p.m]}/${p.y}`; };
+
+  const restaurar = async (item) => {
+    setOcupado(item.id); setErro(""); setNota("");
+    try {
+      const semVinculo = await restaurarDaLixeira(item);
+      setItens(l => l.filter(i => i.id !== item.id));
+      setNota(semVinculo
+        ? `"${item.rotulo}" voltou, mas sem os vínculos de categoria e conta fixa — ` +
+          `eles não existem mais. Vale conferir o lançamento.`
+        : `"${item.rotulo}" voltou para ${rotuloMes(item.mes) || "onde estava"}.`);
+      onMudou();
+    } catch (e) {
+      setErro("Não consegui restaurar: " + (e?.message || e));
+    } finally {
+      setOcupado("");
+    }
+  };
+
+  const apagarDeVez = async (item) => {
+    const escolha = await onPerguntar({
+      titulo: `Apagar "${item.rotulo}" de vez?`,
+      texto: "Isto não tem volta: o registro sai da lixeira e não dá mais para restaurar.",
+      acoes: [{ id: "apagar", rotulo: "Apagar de vez", tom: "perigo" }],
+    });
+    if (escolha !== "apagar") return;
+    await supabase.from("lixeira").delete().eq("id", item.id);
+    setItens(l => l.filter(i => i.id !== item.id));
+    setNota(""); setErro("");
+  };
+
+  const esvaziar = async () => {
+    const escolha = await onPerguntar({
+      titulo: "Esvaziar a lixeira?",
+      texto: `Os ${itens.length} registros guardados somem de vez, sem volta.`,
+      acoes: [{ id: "esvaziar", rotulo: "Esvaziar", tom: "perigo" }],
+    });
+    if (escolha !== "esvaziar") return;
+    await supabase.from("lixeira").delete().gte("removido_em", "1970-01-01T00:00:00Z");
+    setItens([]); setNota(""); setErro("");
+  };
+
+  return (
+    <Overlay onFechar={onFechar}>
+      <h2 style={S.modalTitulo}>Lixeira</h2>
+      <p style={S.modalAjuda}>
+        Tudo que você apaga passa por aqui e fica {DIAS_LIXEIRA} dias antes de
+        sumir de vez. Restaurar devolve o registro ao mês de onde ele saiu.
+      </p>
+
+      {erro && <div style={S.erro}><AlertCircle size={15} /><span>{erro}</span></div>}
+      {nota && <div style={S.lixNota}>{nota}</div>}
+
+      {itens === null ? (
+        <div style={S.catVazio}>Carregando…</div>
+      ) : itens.length === 0 ? (
+        <div style={S.catVazio}>A lixeira está vazia.</div>
+      ) : (
+        <>
+          <div style={S.catLista}>
+            {itens.map(item => (
+              <div key={item.id} style={S.lixLinha}>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={S.lixNome}>{item.rotulo || NOME_TABELA[item.tabela] || "Registro"}</div>
+                  <div style={S.lixMeta}>
+                    {NOME_TABELA[item.tabela] || item.tabela}
+                    {item.mes ? ` · ${rotuloMes(item.mes)}` : ""}
+                    {` · apagado em ${dataHora(item.removido_em)}`}
+                  </div>
+                </div>
+                {Number(item.valor) > 0 && <div style={S.lixValor}>{brl(item.valor)}</div>}
+                <button style={S.lixRestaurar} disabled={ocupado === item.id} onClick={() => restaurar(item)}>
+                  <RotateCcw size={13} /> {ocupado === item.id ? "…" : "Restaurar"}
+                </button>
+                <button style={S.iconBtn} onClick={() => apagarDeVez(item)}
+                  aria-label={`Apagar "${item.rotulo}" de vez`} title="Apagar de vez">
+                  <X size={15} />
+                </button>
+              </div>
+            ))}
+          </div>
+          <button style={S.lixEsvaziar} onClick={esvaziar}>
+            <Trash2 size={13} /> Esvaziar a lixeira
+          </button>
+        </>
+      )}
+
+      <div style={S.modalAcoes}>
+        <button style={S.btnSec} onClick={onFechar}>Fechar</button>
+      </div>
+    </Overlay>
+  );
+}
+
 function Overlay({ children, onFechar }) {
   useEffect(() => {
     const onEsc = (e) => e.key === "Escape" && onFechar();
@@ -1935,6 +2304,29 @@ const S = {
   catChip: { display: "inline-flex", alignItems: "center", gap: 4, fontSize: 12, color: "var(--texto-3)", background: "var(--recuo)", border: "1px solid var(--borda)", borderRadius: 99, padding: "3px 4px 3px 10px" },
   catChipX: { display: "grid", placeItems: "center", width: 17, height: 17, borderRadius: 99, border: "none", background: "transparent", color: "var(--texto-4)", cursor: "pointer" },
   catVazio: { fontSize: 13, color: "var(--texto-4)", border: "1px dashed var(--borda)", borderRadius: 11, padding: "18px 14px", textAlign: "center" },
+
+  // Tarja de desfazer: acima do botão de novo gasto, para não tapar nem ser tapada.
+  tarja: { position: "fixed", bottom: 78, left: "50%", transform: "translateX(-50%)", zIndex: 40, display: "flex", alignItems: "center", gap: 10, width: "calc(100% - 32px)", maxWidth: 420, boxSizing: "border-box", background: "var(--modal)", border: "1px solid var(--borda-2)", borderRadius: 12, padding: "10px 8px 10px 14px", boxShadow: "0 10px 30px var(--sombra)" },
+  tarjaTexto: { flex: 1, minWidth: 0, fontSize: 13, color: "var(--texto-2)", lineHeight: 1.4, overflowWrap: "anywhere" },
+  tarjaBtn: { display: "inline-flex", alignItems: "center", gap: 5, flexShrink: 0, background: "var(--botao-neutro)", border: "1px solid var(--borda)", borderRadius: 9, padding: "7px 11px", color: "var(--texto)", fontSize: 13, fontWeight: 700, cursor: "pointer" },
+  tarjaX: { width: 26, height: 26, borderRadius: 7, border: "none", background: "transparent", color: "var(--texto-5)", cursor: "pointer", display: "grid", placeItems: "center", flexShrink: 0 },
+
+  overlayConfirma: { position: "fixed", inset: 0, background: "var(--sombra)", backdropFilter: "blur(4px)", display: "grid", placeItems: "center", padding: 16, zIndex: 60 },
+  modalConfirma: { width: "100%", maxWidth: 380, background: "var(--recuo)", border: "1px solid var(--borda-2)", borderRadius: 18, padding: "22px 22px 20px", boxShadow: "0 20px 50px var(--sombra)" },
+  confirmaIcone: { display: "grid", placeItems: "center", width: 38, height: 38, borderRadius: 11, background: "color-mix(in srgb, var(--vermelho) 14%, transparent)", color: "var(--vermelho)", marginBottom: 13 },
+  confirmaTitulo: { margin: "0 0 6px", fontSize: 17, fontWeight: 700, letterSpacing: "-0.02em", lineHeight: 1.3, overflowWrap: "anywhere" },
+  confirmaTexto: { margin: 0, fontSize: 13.5, color: "var(--texto-3)", lineHeight: 1.5, overflowWrap: "anywhere" },
+  confirmaNota: { margin: "10px 0 0", fontSize: 12, color: "var(--texto-4)", lineHeight: 1.45 },
+  confirmaAcoes: { display: "flex", gap: 9, marginTop: 20 },
+  btnPerigo: { flex: 1, background: "var(--vermelho)", border: "none", borderRadius: 10, padding: "12px", color: "#fff", fontSize: 15, fontWeight: 700, cursor: "pointer" },
+
+  lixLinha: { display: "flex", alignItems: "center", gap: 8, border: "1px solid var(--borda)", background: "var(--superficie)", borderRadius: 11, padding: "9px 8px 9px 12px" },
+  lixNome: { fontSize: 14, fontWeight: 600, overflowWrap: "anywhere" },
+  lixMeta: { fontSize: 11, color: "var(--texto-4)", marginTop: 2 },
+  lixValor: { fontSize: 13, fontWeight: 700, fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap", flexShrink: 0 },
+  lixRestaurar: { display: "inline-flex", alignItems: "center", gap: 5, flexShrink: 0, background: "var(--botao-neutro)", border: "1px solid var(--borda)", borderRadius: 9, padding: "6px 10px", color: "var(--texto)", fontSize: 12.5, fontWeight: 700, cursor: "pointer" },
+  lixNota: { fontSize: 12.5, lineHeight: 1.5, color: "var(--verde-claro)", background: "rgba(34,197,94,0.1)", border: "1px solid rgba(34,197,94,0.3)", borderRadius: 10, padding: "9px 11px", marginBottom: 12 },
+  lixEsvaziar: { display: "flex", alignItems: "center", justifyContent: "center", gap: 6, width: "100%", marginTop: 12, background: "transparent", border: "1px dashed var(--borda)", borderRadius: 10, padding: "9px", color: "var(--texto-5)", fontSize: 12.5, fontWeight: 600, cursor: "pointer" },
 
   overlay: { position: "fixed", inset: 0, background: "var(--sombra)", backdropFilter: "blur(4px)", display: "grid", placeItems: "center", padding: 16, zIndex: 50 },
   modal: { position: "relative", width: "100%", maxWidth: 420, maxHeight: "90vh", overflowY: "auto", background: "var(--recuo)", border: "1px solid var(--borda)", borderRadius: 18, padding: "24px 22px" },
