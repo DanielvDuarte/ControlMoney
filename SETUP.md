@@ -49,17 +49,28 @@ retornam nenhuma linha. Por isso o repositório pode ser público sem risco.
 
 ## 1. Supabase
 
-**Banco.** O [schema.sql](schema.sql) foi executado uma vez no SQL Editor. Ele
-cria as três tabelas (`categorias`, `meses`, `gastos`), liga RLS em todas,
-cria as policies por `user_id` e instala o gatilho `on_auth_user_created_seed`
-em `auth.users`, que cadastra a categoria inicial (Casa) em cada conta nova —
-inclusive contas criadas via Google.
+**Banco.** O [schema.sql](schema.sql) é rodado no SQL Editor. Ele cria as oito
+tabelas (`categorias`, `meses`, `fixos`, `fixos_pulados`, `entradas`,
+`analises`, `gastos`, `lixeira`), liga RLS em todas, cria as policies por
+`user_id` e instala o gatilho `on_auth_user_created_seed` em `auth.users`, que
+cadastra a categoria inicial (Casa) em cada conta nova — inclusive contas
+criadas via Google.
 
-Se o `schema.sql` for alterado depois (como no caso do seed, que já foi
-enxugado uma vez), rode só o trecho alterado no SQL Editor: o `create or
-replace function` substitui a versão antiga sem tocar nos dados. E lembre que
-o gatilho só age em contas **novas** — contas existentes ficam com as
-categorias que receberam no dia em que foram criadas.
+**Quando o `schema.sql` mudar, cole ele inteiro de novo.** Não é preciso caçar
+o trecho novo: o arquivo é idempotente de ponta a ponta — tabelas e índices com
+`if not exists`, cada policy derrubada antes de ser recriada, `create or
+replace` na função. Não há `drop table`, `delete` nem `alter column` em lugar
+nenhum, então reexecutar não toca em nenhum dado.
+
+Isso nem sempre foi verdade: até setembro de 2026 o arquivo tinha as policies
+de `fixos_pulados` e `entradas` **antes** das tabelas que elas referenciam, o
+que fazia um banco novo falhar em `relation does not exist`, e as policies não
+tinham `drop` antes, o que fazia a segunda execução falhar em `42710: policy
+already exists`. Se você topar com esses erros, é porque está com uma cópia
+antiga do arquivo.
+
+Lembre que o gatilho só age em contas **novas** — contas existentes ficam com
+as categorias que receberam no dia em que foram criadas.
 
 Rodar esse script devolve *"Success. No rows returned"*. É o esperado: ele cria
 estruturas, não consulta dados.
