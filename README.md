@@ -32,8 +32,10 @@ No ar em **https://danielvduarte.github.io/ControlMoney/**
   **Desfazer**, e o que saiu fica **30 dias na lixeira** — botão da lata no
   cabeçalho — de onde dá para restaurar tudo de volta ao mês de origem.
 - Ordenar a lista: **a pagar primeiro** (o padrão — categorias já quitadas
-  descem junto com os itens pagos), por data, por nome ou por maior valor. A
-  escolha fica salva no aparelho.
+  descem junto com os itens pagos), mais recentes, mais antigos, por nome ou
+  por maior valor. A escolha fica salva no aparelho.
+- Campo de valor com a vírgula automática: os dígitos entram pela direita, como
+  numa maquininha (1, 2, 3, 4 → 12,34), então não dá para errar a casa decimal.
 - Observação livre por gasto ("negociado até dezembro", "conferir reajuste"),
   que aparece na lista e vai junto no resumo levado ao Claude.
 - Editar um gasto parcelado corrige a série inteira — dá para consertar
@@ -68,9 +70,10 @@ No ar em **https://danielvduarte.github.io/ControlMoney/**
    Isso cria as tabelas, ativa RLS, as policies por usuário e o gatilho que
    cadastra a categoria inicial (Casa) em cada conta nova — o resto você cria
    conforme lança os gastos.
-   Se o banco **já existe** de antes da lixeira, basta rodar o último bloco do
-   `schema.sql` (o que começa em `-- LIXEIRA`): ele é independente do resto e
-   pode ser executado mais de uma vez sem estragar nada.
+   O arquivo é idempotente: se o banco **já existe** e você só quer aplicar o
+   que mudou (a `lixeira`, por exemplo), cole ele inteiro de novo do mesmo
+   jeito. Nada é apagado nem sobrescrito — não há `drop table`, `delete` nem
+   `alter column` em lugar nenhum.
 3. Em **Project Settings → API Keys**, copie:
    - **Project URL** (em *Data API*) → vai em `VITE_SUPABASE_URL`.
      É só o domínio, sem o `/rest/v1/` do fim.

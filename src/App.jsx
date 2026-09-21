@@ -307,7 +307,12 @@ function Painel({ usuario }) {
   const [renda, setRenda] = useState(0);
   const [entradas, setEntradas] = useState([]);   // ganhos avulsos do mês
   const [ordem, setOrdem] = useState(() => {
-    try { return localStorage.getItem("ordem-lista") || "pendentes"; } catch { return "pendentes"; }
+    // "data" era o nome antigo de "mais antigos"; quem já tinha escolhido
+    // continua vendo a lista do mesmo jeito.
+    try {
+      const salva = localStorage.getItem("ordem-lista");
+      return salva === "data" ? "antigos" : salva || "pendentes";
+    } catch { return "pendentes"; }
   });
   const [gastos, setGastos] = useState([]);
   const [carregando, setCarregando] = useState(true);
@@ -467,9 +472,16 @@ function Painel({ usuario }) {
     });
 
     const porData = (a, b) => String(a.data || "9999").localeCompare(String(b.data || "9999"));
+    // Pela data do gasto; no mesmo dia, pela ordem em que foi lançado. Sem data
+    // vai para o fim nos dois sentidos — não é nem o mais antigo nem o mais novo.
+    const quando = (g) => `${g.data}|${g.created_at || ""}`;
+    const porIdade = (sentido) => (a, b) => (!a.data !== !b.data
+      ? (a.data ? -1 : 1)
+      : sentido * quando(a).localeCompare(quando(b)));
     const dentro = {
       pendentes: (a, b) => (a.pago === b.pago ? porData(a, b) : a.pago ? 1 : -1),
-      data: porData,
+      antigos: porIdade(1),
+      recentes: porIdade(-1),
       nome: (a, b) => a.nome.localeCompare(b.nome, "pt-BR"),
       valor: (a, b) => Number(b.valor || 0) - Number(a.valor || 0),
     }[ordem] || porData;
@@ -489,7 +501,10 @@ function Painel({ usuario }) {
       pendentes: (a, b) => (a.pendente === b.pendente
         ? soma(b.itens.filter(g => !g.pago)) - soma(a.itens.filter(g => !g.pago))
         : a.pendente ? -1 : 1),
-      data: () => 0,
+      // Já ordenado por dentro, o primeiro item de cada grupo é o mais antigo
+      // (ou o mais novo): comparar só ele põe o grupo certo no topo.
+      antigos: (a, b) => dentro(a.itens[0], b.itens[0]),
+      recentes: (a, b) => dentro(a.itens[0], b.itens[0]),
       nome: (a, b) => a.nome.localeCompare(b.nome, "pt-BR"),
       valor: (a, b) => b.subtotal - a.subtotal,
     }[ordem] || (() => 0);
@@ -1061,7 +1076,8 @@ function Painel({ usuario }) {
             <span style={S.barraOrdemRotulo}>Ordenar por</span>
             <select style={S.selectOrdem} value={ordem} onChange={e => setOrdem(e.target.value)} aria-label="Ordenar a lista">
               <option value="pendentes">a pagar primeiro</option>
-              <option value="data">data</option>
+              <option value="recentes">mais recentes</option>
+              <option value="antigos">mais antigos</option>
               <option value="nome">nome</option>
               <option value="valor">maior valor</option>
             </select>
@@ -1657,7 +1673,7 @@ function ModalGasto({ categorias, mes, editando, erroExterno, onCriarCategoria, 
       <label style={S.label}>
         Valor {parcelas > 1 ? (modo === "dividir" ? "(total da compra)" : "(de cada mês)") : ""}
       </label>
-      <input type="number" inputMode="decimal" style={S.input} value={valor} onChange={e => setValor(e.target.value)} placeholder="0,00" />
+      <CampoValor style={S.input} value={valor} onChange={setValor} />
 
       <label style={S.label}>Data {parcelas > 1 ? "(da primeira parcela)" : ""}</label>
       <input type="date" style={S.input} value={data} onChange={e => setData(e.target.value)}
@@ -1772,6 +1788,33 @@ function ModalGasto({ categorias, mes, editando, erroExterno, onCriarCategoria, 
         <button style={S.btnPri} onClick={submeter}>{editando ? "Salvar" : "Adicionar"}</button>
       </div>
     </Overlay>
+  );
+}
+
+// ------------------------------------------------------------
+//  Campo de dinheiro
+//  Os dígitos entram pela direita, como numa maquininha de cartão: digitar
+//  1, 2, 3, 4 dá 12,34. Não existe vírgula para esquecer nem para pôr no
+//  lugar errado — era assim que 1234 virava mil reais em vez de doze.
+//  Por fora ele entrega "12.34", o mesmo texto que o type=number entregava,
+//  então nada do que lê o valor precisou mudar.
+// ------------------------------------------------------------
+const CENTAVOS_MAX = 11;   // 999.999.999,99 — cabe no numeric(12,2) do banco
+
+function CampoValor({ value, onChange, style }) {
+  const centavos = Math.round((Number(value) || 0) * 100);
+  const texto = centavos
+    ? (centavos / 100).toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+    : "";
+
+  const mudar = (e) => {
+    const digitos = e.target.value.replace(/\D/g, "").replace(/^0+/, "").slice(0, CENTAVOS_MAX);
+    onChange(digitos ? (Number(digitos) / 100).toFixed(2) : "");
+  };
+
+  return (
+    <input type="text" inputMode="numeric" style={style} value={texto} onChange={mudar}
+      placeholder="0,00" aria-label="Valor em reais" />
   );
 }
 
