@@ -46,8 +46,9 @@ create table if not exists public.meses (
 -- Guarda o molde, não os lançamentos: ao abrir um mês pela primeira vez, o
 -- app cria um gasto para cada conta fixa ativa. Assim não é preciso gerar
 -- parcelas até o infinito, e parar uma conta fixa não mexe no passado.
--- O molde não guarda valor: cada mês nasce zerado e é preenchido com o que a
--- conta trouxe de fato.
+-- O `valor` do molde é opcional. Informado (aluguel, escola), o lançamento de
+-- cada mês já nasce com ele; nulo (água, luz), nasce zerado e é preenchido
+-- com o que a conta trouxe de fato.
 create table if not exists public.fixos (
   id           uuid primary key default gen_random_uuid(),
   user_id      uuid not null default auth.uid() references auth.users(id) on delete cascade,
@@ -56,6 +57,7 @@ create table if not exists public.fixos (
   subcategoria text not null default '',
   dia          int not null default 1,
   ativo        boolean not null default true,
+  valor        numeric(12,2),              -- valor mensal; nulo = nasce zerado
   created_at   timestamptz not null default now()
 );
 
@@ -131,6 +133,14 @@ create table if not exists public.lixeira (
   dados       jsonb not null,              -- a linha inteira, como estava
   removido_em timestamptz not null default now()
 );
+
+-- ============================================================
+--  COLUNAS ADICIONADAS DEPOIS
+--  `create table if not exists` não mexe numa tabela que já existe, então
+--  uma coluna nova precisa também de um `add column if not exists` aqui —
+--  é isso que a leva para os bancos criados antes dela.
+-- ============================================================
+alter table public.fixos add column if not exists valor numeric(12,2);
 
 -- ============================================================
 --  ÍNDICES

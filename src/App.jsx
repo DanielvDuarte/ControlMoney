@@ -24,6 +24,12 @@ const diaEm = (mesKey, dia) => `${mesKey}-${String(Math.min(dia, ultimoDia(mesKe
 const diaDe = (data) => Number(String(data).slice(8, 10)) || 1;
 const ddmm = (data) => `${String(data).slice(8, 10)}/${String(data).slice(5, 7)}`;
 const soma = (lista) => lista.reduce((s, g) => s + Number(g.valor || 0), 0);
+// Pela data do gasto; no mesmo dia, pela ordem em que foi lançado. Sem data
+// vai para o fim nos dois sentidos — não é nem o mais antigo nem o mais novo.
+const quando = (g) => `${g.data}|${g.created_at || ""}`;
+const porIdade = (sentido) => (a, b) => (!a.data !== !b.data
+  ? (a.data ? -1 : 1)
+  : sentido * quando(a).localeCompare(quando(b)));
 
 // Chave para reconhecer uma descrição já classificada antes ("PAG*ASSAI 1234"
 // e "PAG*ASSAI 9876" viram a mesma coisa): sem acento, sem número, sem símbolo.
@@ -369,12 +375,14 @@ function Painel({ usuario }) {
 
     let criou = false;
     if (faltando.length) {
-      // Nasce com valor zero de propósito: água e luz mudam todo mês, e um
-      // valor herdado passaria batido justamente quando veio diferente —
-      // atraso com juros, reajuste, consumo fora do padrão.
+      // Conta com valor informado (aluguel, escola, pró-labore) já nasce com
+      // ele, para o mês mostrar de cara quanto é preciso separar. Sem valor
+      // (água, luz), nasce zerada e marcada "a preencher": um valor herdado
+      // passaria batido justamente quando veio diferente — atraso com juros,
+      // reajuste, consumo fora do padrão.
       const linhas = faltando.map(f => ({
         user_id: usuario.id, mes, fixo_id: f.id,
-        nome: f.nome, valor: 0,
+        nome: f.nome, valor: Number(f.valor) || 0,
         categoria_id: f.categoria_id, subcategoria: f.subcategoria || "",
         data: diaEm(mes, f.dia), pago: false,
       }));
@@ -472,16 +480,8 @@ function Painel({ usuario }) {
     });
 
     const porData = (a, b) => String(a.data || "9999").localeCompare(String(b.data || "9999"));
-    // Pela data do gasto; no mesmo dia, pela ordem em que foi lançado. Sem data
-    // vai para o fim nos dois sentidos — não é nem o mais antigo nem o mais novo.
-    const quando = (g) => `${g.data}|${g.created_at || ""}`;
-    const porIdade = (sentido) => (a, b) => (!a.data !== !b.data
-      ? (a.data ? -1 : 1)
-      : sentido * quando(a).localeCompare(quando(b)));
     const dentro = {
       pendentes: (a, b) => (a.pago === b.pago ? porData(a, b) : a.pago ? 1 : -1),
-      antigos: porIdade(1),
-      recentes: porIdade(-1),
       nome: (a, b) => a.nome.localeCompare(b.nome, "pt-BR"),
       valor: (a, b) => Number(b.valor || 0) - Number(a.valor || 0),
     }[ordem] || porData;
@@ -501,16 +501,20 @@ function Painel({ usuario }) {
       pendentes: (a, b) => (a.pendente === b.pendente
         ? soma(b.itens.filter(g => !g.pago)) - soma(a.itens.filter(g => !g.pago))
         : a.pendente ? -1 : 1),
-      // Já ordenado por dentro, o primeiro item de cada grupo é o mais antigo
-      // (ou o mais novo): comparar só ele põe o grupo certo no topo.
-      antigos: (a, b) => dentro(a.itens[0], b.itens[0]),
-      recentes: (a, b) => dentro(a.itens[0], b.itens[0]),
       nome: (a, b) => a.nome.localeCompare(b.nome, "pt-BR"),
       valor: (a, b) => b.subtotal - a.subtotal,
     }[ordem] || (() => 0);
 
     return lista.sort(entre);
   }, [gastos, catPorId, ordem]);
+
+  // "Mais recentes" e "mais antigos" são sobre a linha do tempo, não sobre
+  // categorias: a lista vem corrida, um lançamento atrás do outro, e cada
+  // cartão mostra a própria categoria no lugar do cabeçalho do grupo.
+  const listaCorrida = useMemo(() => {
+    const sentido = { antigos: 1, recentes: -1 }[ordem];
+    return sentido ? [...gastos].sort(porIdade(sentido)) : null;
+  }, [gastos, ordem]);
 
   // ---------- confirmação e lixeira ----------
   // Pergunta antes de apagar. Dá para usar com `await`, como o window.confirm,
@@ -951,9 +955,28 @@ function Painel({ usuario }) {
     return data;
   };
 
+  // Devolve o erro (ou null) para quem chamou decidir se mostra algo.
   const alterarFixo = async (id, campos) => {
-    await supabase.from("fixos").update(campos).eq("id", id);
+    const { error } = await supabase.from("fixos").update(campos).eq("id", id);
     await carregarFixos();
+    return error;
+  };
+
+  // O valor da conta fixa vale para os meses que ainda vão ser abertos, mas
+  // também chega aos que já foram: um outubro aberto antes de você informar o
+  // valor já tem o lançamento criado, zerado. Só mexe no que ainda não é seu —
+  // não pago, do mês corrente em diante, e ainda zerado ou com o valor antigo
+  // desta conta. Um valor que você digitou no mês nunca é sobrescrito.
+  const definirValorFixo = async (f, valor) => {
+    const error = await alterarFixo(f.id, { valor });
+    if (error || !(valor > 0)) return error;
+    const antigo = Number(f.valor) || 0;
+    await supabase.from("gastos").update({ valor })
+      .eq("fixo_id", f.id).eq("pago", false)
+      .in("valor", antigo > 0 ? [0, antigo] : [0])
+      .gte("mes", hojeISO().slice(0, 7));
+    carregarMes(mesAtual);
+    return null;
   };
 
   const removerFixo = async (f) => {
@@ -1008,6 +1031,52 @@ function Painel({ usuario }) {
   const fechar = () => { setModalGasto(false); setEditando(null); };
 
   const saldoNeg = totais.saldo < 0;
+
+  // Um gasto na lista. Na lista corrida não há cabeçalho de grupo dizendo a
+  // categoria, então ela vem no próprio cartão, com a mesma bolinha de cor.
+  const cartaoGasto = (g, comCategoria) => {
+    const cat = catPorId[g.categoria_id];
+    const detalhes = [
+      g.data && <span key="d" style={S.itemData}>{ddmm(g.data)}</span>,
+      comCategoria && (
+        <span key="c" style={S.itemCat}>
+          <span style={{ ...S.dotMini, background: cat?.cor || "var(--texto-4)" }} />
+          {cat?.nome || "Sem categoria"}
+        </span>
+      ),
+      g.subcategoria && <span key="s">{g.subcategoria}</span>,
+    ].filter(Boolean);
+
+    return (
+      <div key={g.id} style={{ ...S.item, background: g.pago ? "rgba(34,197,94,0.14)" : "var(--superficie)", borderColor: g.pago ? "rgba(34,197,94,0.4)" : "var(--borda)" }}>
+        <button style={{ ...S.check, background: g.pago ? "var(--verde)" : "transparent", borderColor: g.pago ? "var(--verde)" : "var(--borda-3)" }}
+          onClick={() => togglePago(g)} aria-label={g.pago ? "Marcar como não pago" : "Marcar como pago"}>
+          {g.pago && <Check size={14} strokeWidth={3} color="var(--fundo)" />}
+        </button>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={S.itemNome}>
+            {/* Só o nome trunca; os selos nunca são comidos por ele. */}
+            <span style={S.itemNomeTexto}>{g.nome}</span>
+            {g.total_parcelas > 1 && <span style={S.parcela}>{g.parcela_atual}/{g.total_parcelas}</span>}
+            {g.fixo_id && <span style={S.seloFixa} title="Conta fixa, lançada automaticamente">fixa</span>}
+          </div>
+          {detalhes.length > 0 && (
+            <div style={S.itemSub}>
+              {detalhes.flatMap((d, i) => (i ? [" · ", d] : [d]))}
+            </div>
+          )}
+          {g.observacao && <div style={S.itemObs}>{g.observacao}</div>}
+        </div>
+        {Number(g.valor) === 0 ? (
+          <button style={S.aPreencher} onClick={() => abrirEdicao(g)}>a preencher</button>
+        ) : (
+          <div style={{ ...S.itemValor, color: g.pago ? "var(--verde-claro)" : "var(--texto)" }}>{brl(g.valor)}</div>
+        )}
+        <button style={S.iconBtn} onClick={() => abrirEdicao(g)} aria-label="Editar"><Pencil size={14} /></button>
+        <button style={S.iconBtn} onClick={() => removerGasto(g)} aria-label="Remover"><Trash2 size={14} /></button>
+      </div>
+    );
+  };
 
   return (
     <Tela>
@@ -1092,6 +1161,8 @@ function Painel({ usuario }) {
               <p style={{ margin: 0, fontWeight: 600, color: "var(--texto)" }}>Nenhum gasto em {MESES[m]}.</p>
               <p style={{ margin: "6px 0 0", fontSize: 14 }}>Toque em <b>+ Novo gasto</b> para começar.</p>
             </div>
+          ) : listaCorrida ? (
+            <div style={S.grupo}>{listaCorrida.map(g => cartaoGasto(g, true))}</div>
           ) : (
             porCategoria.map(({ nome: cat, itens, subtotal }) => {
               const cor = categorias.find(c => c.nome === cat)?.cor || "var(--texto-4)";
@@ -1105,37 +1176,7 @@ function Painel({ usuario }) {
                     {pct !== null && <span style={S.grupoPct} title={`${cat} consome ${pctTxt(pct)} da renda do mês`}>{pctTxt(pct)}</span>}
                     <span style={S.grupoTotal}>{brl(subtotal)}</span>
                   </div>
-                  {itens.map(g => (
-                    <div key={g.id} style={{ ...S.item, background: g.pago ? "rgba(34,197,94,0.14)" : "var(--superficie)", borderColor: g.pago ? "rgba(34,197,94,0.4)" : "var(--borda)" }}>
-                      <button style={{ ...S.check, background: g.pago ? "var(--verde)" : "transparent", borderColor: g.pago ? "var(--verde)" : "var(--borda-3)" }}
-                        onClick={() => togglePago(g)} aria-label={g.pago ? "Marcar como não pago" : "Marcar como pago"}>
-                        {g.pago && <Check size={14} strokeWidth={3} color="var(--fundo)" />}
-                      </button>
-                      <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={S.itemNome}>
-                          {/* Só o nome trunca; os selos nunca são comidos por ele. */}
-                          <span style={S.itemNomeTexto}>{g.nome}</span>
-                          {g.total_parcelas > 1 && <span style={S.parcela}>{g.parcela_atual}/{g.total_parcelas}</span>}
-                          {g.fixo_id && <span style={S.seloFixa} title="Conta fixa, lançada automaticamente">fixa</span>}
-                        </div>
-                        {(g.data || g.subcategoria) && (
-                          <div style={S.itemSub}>
-                            {g.data && <span style={S.itemData}>{ddmm(g.data)}</span>}
-                            {g.data && g.subcategoria && " · "}
-                            {g.subcategoria}
-                          </div>
-                        )}
-                        {g.observacao && <div style={S.itemObs}>{g.observacao}</div>}
-                      </div>
-                      {Number(g.valor) === 0 ? (
-                        <button style={S.aPreencher} onClick={() => abrirEdicao(g)}>a preencher</button>
-                      ) : (
-                        <div style={{ ...S.itemValor, color: g.pago ? "var(--verde-claro)" : "var(--texto)" }}>{brl(g.valor)}</div>
-                      )}
-                      <button style={S.iconBtn} onClick={() => abrirEdicao(g)} aria-label="Editar"><Pencil size={14} /></button>
-                      <button style={S.iconBtn} onClick={() => removerGasto(g)} aria-label="Remover"><Trash2 size={14} /></button>
-                    </div>
-                  ))}
+                  {itens.map(g => cartaoGasto(g, false))}
                 </div>
               );
             })
@@ -1164,7 +1205,7 @@ function Painel({ usuario }) {
       {modalImportar && <ModalImportar categorias={categorias} onFechar={() => setModalImportar(false)}
         onPreparar={prepararImportacao} onImportar={importarGastos} />}
       {modalFixos && <ModalFixos fixos={fixos} categorias={categorias} onFechar={() => setModalFixos(false)}
-        onAlterar={alterarFixo} onRemover={removerFixo} />}
+        onAlterar={alterarFixo} onValor={definirValorFixo} onRemover={removerFixo} />}
       {modalLixeira && <ModalLixeira onFechar={() => setModalLixeira(false)}
         onPerguntar={perguntar}
         onMudou={() => { carregarCategorias(); carregarMes(mesAtual); }} />}
@@ -1272,15 +1313,49 @@ function ModalEntradas({ renda, entradas, mes, onFechar, onSalvarRenda, onAdicio
   );
 }
 
-function ModalFixos({ fixos, categorias, onFechar, onAlterar, onRemover }) {
+// Valor de uma conta fixa. Guarda sozinho ao sair do campo, como o dia ao
+// lado — sem botão de salvar para cada linha.
+function ValorFixo({ fixo, onValor }) {
+  const [v, setV] = useState(fixo.valor ?? "");
+  const [erro, setErro] = useState("");
+
+  const guardar = async () => {
+    const novo = v === "" ? null : Number(v);
+    const atual = fixo.valor == null ? null : Number(fixo.valor);
+    if (novo === atual) return;
+    const e = await onValor(fixo, novo);
+    setErro(!e ? ""
+      : /valor|column|schema cache/i.test(e.message)
+        ? "O banco ainda não tem esta coluna: rode o schema.sql de novo no Supabase."
+        : "Não consegui guardar: " + e.message);
+  };
+
+  return (
+    <>
+      <div style={S.fixoValorLinha}>
+        <span style={S.fixoDiaRotulo}>valor por mês</span>
+        <CampoValor style={S.fixoValor} value={v} onChange={setV} onBlur={guardar}
+          aria-label={`Valor mensal de ${fixo.nome}`} />
+      </div>
+      {erro && <div style={{ ...S.erro, marginTop: 6, fontSize: 12 }}><AlertCircle size={13} /><span>{erro}</span></div>}
+    </>
+  );
+}
+
+function ModalFixos({ fixos, categorias, onFechar, onAlterar, onValor, onRemover }) {
   const nomeCat = (id) => categorias.find(c => c.id === id)?.nome || "Sem categoria";
+
+  // Só as ativas contam: uma conta pausada não está saindo do bolso agora.
+  const ativas = fixos.filter(f => f.ativo);
+  const comValor = ativas.filter(f => Number(f.valor) > 0);
+  const totalFixo = comValor.reduce((s, f) => s + Number(f.valor), 0);
 
   return (
     <Overlay onFechar={onFechar}>
       <h2 style={S.modalTitulo}>Contas fixas</h2>
       <p style={S.modalAjuda}>
-        Lançadas sozinhas a cada mês novo, com valor zerado — você preenche o
-        que a conta trouxe, para nenhum valor antigo passar batido.
+        Lançadas sozinhas a cada mês novo. Com valor, já entram preenchidas;
+        sem valor, entram zeradas para você conferir o que a conta trouxe.
       </p>
 
       {fixos.length === 0 ? (
@@ -1289,9 +1364,23 @@ function ModalFixos({ fixos, categorias, onFechar, onAlterar, onRemover }) {
           criar uma.
         </div>
       ) : (
+        <>
+        <div style={S.fixoTotal}>
+          <div>
+            <div style={S.fixoTotalRotulo}>Despesa fixa por mês</div>
+            <div style={S.fixoTotalNota}>
+              {ativas.length === 0 ? "nenhuma conta ativa — as pausadas não entram"
+                : comValor.length === ativas.length
+                  ? (ativas.length > 1 ? `soma das ${ativas.length} contas ativas` : "a única conta ativa")
+                  : `${comValor.length} de ${ativas.length} ativas com valor — as outras ficam de fora`}
+            </div>
+          </div>
+          <div style={S.fixoTotalValor}>{brl(totalFixo)}</div>
+        </div>
         <div style={S.catLista}>
           {fixos.map(f => (
-            <div key={f.id} style={{ ...S.fixoLinha, opacity: f.ativo ? 1 : 0.5 }}>
+            <div key={f.id} style={{ ...S.fixoCartao, opacity: f.ativo ? 1 : 0.5 }}>
+            <div style={S.fixoTopo}>
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={S.fixoNome}>{f.nome}</div>
                 <div style={S.fixoMeta}>
@@ -1312,13 +1401,22 @@ function ModalFixos({ fixos, categorias, onFechar, onAlterar, onRemover }) {
                 <Trash2 size={14} />
               </button>
             </div>
+            <ValorFixo fixo={f} onValor={onValor} />
+            </div>
           ))}
+          <p style={S.dicaCampo}>
+            O <b>valor por mês</b> é opcional. Informado, ele já entra nos meses
+            novos e nos lançamentos ainda não pagos a partir deste mês — sem
+            mexer em nenhum valor que você tenha digitado no mês. Deixe vazio nas
+            contas que mudam todo mês, como água e luz.
+          </p>
           <p style={S.dicaCampo}>
             <b>Pausar</b> serve para uma interrupção temporária; a <b>lixeira</b>
             encerra de vez — e, se houver lançamentos em meses à frente ainda não
             pagos, ela pergunta se quer apagá-los também. O histórico nunca é tocado.
           </p>
         </div>
+        </>
       )}
 
       <div style={S.modalAcoes}>
@@ -1801,7 +1899,7 @@ function ModalGasto({ categorias, mes, editando, erroExterno, onCriarCategoria, 
 // ------------------------------------------------------------
 const CENTAVOS_MAX = 11;   // 999.999.999,99 — cabe no numeric(12,2) do banco
 
-function CampoValor({ value, onChange, style }) {
+function CampoValor({ value, onChange, style, ...resto }) {
   const centavos = Math.round((Number(value) || 0) * 100);
   const texto = centavos
     ? (centavos / 100).toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })
@@ -1814,7 +1912,7 @@ function CampoValor({ value, onChange, style }) {
 
   return (
     <input type="text" inputMode="numeric" style={style} value={texto} onChange={mudar}
-      placeholder="0,00" aria-label="Valor em reais" />
+      placeholder="0,00" aria-label="Valor em reais" {...resto} />
   );
 }
 
@@ -2279,6 +2377,8 @@ const S = {
   parcela: { fontSize: 11, fontWeight: 700, color: "var(--fundo)", background: "var(--texto-3)", padding: "1px 6px", borderRadius: 6, flexShrink: 0 },
   itemSub: { fontSize: 12, color: "var(--texto-4)", marginTop: 1 },
   itemData: { fontVariantNumeric: "tabular-nums", color: "var(--texto-3)" },
+  itemCat: { display: "inline-flex", alignItems: "center", gap: 5 },
+  dotMini: { width: 7, height: 7, borderRadius: 99, flexShrink: 0 },
   dicaCampo: { fontSize: 11.5, color: "var(--texto-4)", marginTop: 5, lineHeight: 1.45 },
   itemObs: { fontSize: 12, color: "var(--ambar-texto)", marginTop: 3, lineHeight: 1.45, overflowWrap: "anywhere" },
   itemValor: { fontWeight: 700, fontSize: 14.5, fontVariantNumeric: "tabular-nums", flexShrink: 0 },
@@ -2303,12 +2403,18 @@ const S = {
   seloFixa: { fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.04em", color: "var(--azul)", background: "color-mix(in srgb, var(--azul) 14%, transparent)", borderRadius: 99, padding: "1px 6px", flexShrink: 0 },
   avisoFixo: { display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginTop: 18, fontSize: 12.5, lineHeight: 1.5, color: "var(--azul)", background: "color-mix(in srgb, var(--azul) 10%, transparent)", border: "1px solid color-mix(in srgb, var(--azul) 28%, transparent)", borderRadius: 11, padding: "10px 12px" },
   caixaFixo: { display: "flex", alignItems: "center", gap: 10, marginTop: 18, background: "var(--recuo)", border: "1px solid var(--borda)", borderRadius: 11, padding: "12px 13px", fontSize: 14, cursor: "pointer" },
-  fixoLinha: { display: "flex", alignItems: "center", gap: 9, border: "1px solid var(--borda)", background: "var(--superficie)", borderRadius: 11, padding: "10px 8px 10px 12px" },
   fixoNome: { fontSize: 14, fontWeight: 600, overflowWrap: "anywhere" },
   fixoMeta: { fontSize: 11.5, color: "var(--texto-4)", marginTop: 2 },
   aPreencher: { fontSize: 11.5, fontWeight: 700, color: "var(--ambar)", background: "color-mix(in srgb, var(--ambar) 13%, transparent)", border: "1px solid color-mix(in srgb, var(--ambar) 30%, transparent)", borderRadius: 99, padding: "3px 9px", cursor: "pointer", whiteSpace: "nowrap", flexShrink: 0 },
   fixoDiaRotulo: { fontSize: 11.5, color: "var(--texto-5)" },
-  fixoCampo: { width: 78, background: "var(--campo)", border: "1px solid var(--campo-borda)", borderRadius: 8, padding: "6px 8px", color: "var(--texto)", fontSize: 13, fontVariantNumeric: "tabular-nums" },
+  fixoCartao: { border: "1px solid var(--borda)", background: "var(--superficie)", borderRadius: 11, padding: "10px 8px 10px 12px" },
+  fixoTopo: { display: "flex", alignItems: "center", gap: 9 },
+  fixoValorLinha: { display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 8, marginTop: 8, paddingTop: 8, borderTop: "1px dashed var(--borda)" },
+  fixoValor: { width: 120, boxSizing: "border-box", background: "var(--campo)", border: "1px solid var(--campo-borda)", borderRadius: 8, padding: "6px 9px", color: "var(--texto)", fontSize: 13.5, textAlign: "right", fontVariantNumeric: "tabular-nums", outline: "none" },
+  fixoTotal: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, background: "var(--superficie-2)", border: "1px solid var(--borda)", borderRadius: 12, padding: "12px 14px", marginBottom: 12 },
+  fixoTotalRotulo: { fontSize: 13, fontWeight: 600, color: "var(--texto-2)" },
+  fixoTotalNota: { fontSize: 11.5, color: "var(--texto-4)", marginTop: 2 },
+  fixoTotalValor: { fontSize: 19, fontWeight: 800, letterSpacing: "-0.02em", fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" },
   fixoDia: { width: 52, background: "var(--campo)", border: "1px solid var(--campo-borda)", borderRadius: 8, padding: "6px 8px", color: "var(--texto)", fontSize: 13, textAlign: "center" },
 
   btnImportar: { display: "flex", alignItems: "center", justifyContent: "center", gap: 7, width: "100%", marginTop: -8, marginBottom: 18, background: "transparent", border: "1px dashed var(--borda)", borderRadius: 12, padding: "10px", color: "var(--texto-4)", fontSize: 13, fontWeight: 600, cursor: "pointer" },

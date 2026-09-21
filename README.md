@@ -15,11 +15,14 @@ No ar em **https://danielvduarte.github.io/ControlMoney/**
 - Gastos por categoria e subcategoria — criáveis na hora ao lançar, e
   renomeáveis ou apagáveis pelo botão de categorias no cabeçalho.
 - **Contas fixas** (água, luz, internet, aluguel): marque "Repetir todo mês" ao
-  lançar e todo mês novo já nasce com ela — **zerada**, marcada como
+  lançar e todo mês novo já nasce com ela — **zerada** se não tiver valor, marcada como
   "a preencher", para você registrar o que a conta trouxe de fato em vez de
   herdar um valor antigo. Ao encerrar uma (comprou a casa, acabou o aluguel), o
   histórico fica intacto e o app se oferece para limpar os lançamentos futuros
-  ainda não pagos.
+  ainda não pagos. Na tela de contas fixas dá para informar um **valor por
+  mês** opcional em cada uma: com ele, a conta já entra preenchida nos meses
+  novos (e nos lançamentos ainda não pagos a partir do mês atual), e o topo
+  soma a despesa fixa mensal das ativas. Sem valor, ela entra zerada.
 - Parcelamento em N meses, com duas formas: **repetir** o valor todo mês
   (aluguel, assinatura) ou **dividir** um total em N parcelas (compra em 3x) —
   aí a última parcela absorve a sobra dos centavos.
