@@ -492,6 +492,27 @@ bico, reembolso, venda. O app calcula `rendaTotal = renda + soma(entradas)`, e
 barra de comprometimento e as porcentagens por categoria. Ao mexer nesse
 cálculo, procure por `rendaTotal`, não por `renda`.
 
+## Totais por subcategoria
+
+Subcategoria não tem tabela: é texto solto em `gastos.subcategoria`, e a lista
+de nomes disponíveis vive no array `categorias.subs`. Somar por ela, então, é
+agrupar strings — `subtotaisPorSub()` faz isso sobre os itens que já estão na
+mão, sem consulta nova ao banco.
+
+Duas decisões de apresentação:
+
+- **Só aparece quando há subcategoria.** Uma categoria em que ninguém usou
+  subcategoria não ganha a linha de chips — seria uma faixa vazia repetida em
+  metade da tela.
+- **"sem subcategoria" fecha a conta.** Quando há mistura, os chips somados
+  precisam bater com o total da categoria; sem essa parcela o número não
+  fecharia e pareceria erro. Ele vai por último e com borda tracejada, para
+  não disputar atenção com o que interessa.
+
+A quebra não aparece nos modos "mais recentes" e "mais antigos", que mostram a
+lista corrida, sem cabeçalho de categoria — lá não há onde pendurá-la. A mesma
+quebra sai no PDF, para o papel não trazer menos que a tela.
+
 ## Ordenação da lista
 
 A lista é agrupada por categoria, e é isso que torna a ordenação menos óbvia

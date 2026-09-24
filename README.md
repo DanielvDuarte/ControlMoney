@@ -50,6 +50,9 @@ No ar em **https://danielvduarte.github.io/ControlMoney/**
   limpa do mês, pronta para salvar em PDF ou imprimir.
 - Quanto cada categoria consumiu da renda, em porcentagem (aparece quando há
   renda informada no mês).
+- Total por subcategoria dentro de cada categoria: o cabeçalho de "Carro"
+  mostra quanto foi para Abastecimento, Manutenção e o resto, no mês. Aparece
+  também no PDF.
 - Navegação por mês — cada mês é independente, dá para voltar e ver o que ficou pendente.
 - Tema claro ou escuro, num botão no cabeçalho; a escolha fica salva no aparelho.
 - Instalável como app (PWA). Sem internet ele abre, mas avisa que não conseguiu

@@ -469,6 +469,25 @@ function Painel({ usuario }) {
     return { total, pago, pendente: total - pago, saldo: rendaTotal - total };
   }, [gastos, rendaTotal]);
 
+  // Quanto cada subcategoria levou dentro da categoria. Devolve vazio quando
+  // nenhum lançamento tem subcategoria — aí a linha de chips só faria ruído.
+  const subtotaisPorSub = (itens) => {
+    const somas = {};
+    itens.forEach(g => {
+      const k = g.subcategoria || "";
+      somas[k] = (somas[k] || 0) + Number(g.valor || 0);
+    });
+    const comSub = Object.entries(somas)
+      .filter(([k]) => k)
+      .map(([nome, total]) => ({ nome, total }))
+      .sort((a, b) => b.total - a.total);
+    if (!comSub.length) return [];
+    // O "sem subcategoria" fecha a conta com o total da categoria, e vai por
+    // último para não disputar espaço com o que interessa.
+    if (somas[""]) comSub.push({ nome: "sem subcategoria", total: somas[""], vago: true });
+    return comSub;
+  };
+
   // Ordenação da lista. Vale nos dois níveis: dentro de cada categoria e entre
   // as categorias — senão, em "pendentes primeiro", um grupo todo pago ficaria
   // no meio da tela e a rolagem continuaria necessária.
@@ -492,6 +511,7 @@ function Painel({ usuario }) {
         nome,
         itens: ordenados,
         subtotal: soma(ordenados),
+        subs: subtotaisPorSub(ordenados),
         pendente: ordenados.some(g => !g.pago),
       };
     });
@@ -1164,7 +1184,7 @@ function Painel({ usuario }) {
           ) : listaCorrida ? (
             <div style={S.grupo}>{listaCorrida.map(g => cartaoGasto(g, true))}</div>
           ) : (
-            porCategoria.map(({ nome: cat, itens, subtotal }) => {
+            porCategoria.map(({ nome: cat, itens, subtotal, subs }) => {
               const cor = categorias.find(c => c.nome === cat)?.cor || "var(--texto-4)";
               // Sem renda informada não há do que tirar porcentagem.
               const pct = rendaTotal > 0 ? (subtotal / rendaTotal) * 100 : null;
@@ -1176,6 +1196,16 @@ function Painel({ usuario }) {
                     {pct !== null && <span style={S.grupoPct} title={`${cat} consome ${pctTxt(pct)} da renda do mês`}>{pctTxt(pct)}</span>}
                     <span style={S.grupoTotal}>{brl(subtotal)}</span>
                   </div>
+                  {subs.length > 0 && (
+                    <div style={S.subsLinha}>
+                      {subs.map(s => (
+                        <span key={s.nome} style={{ ...S.subChip, ...(s.vago ? S.subChipVago : null) }}>
+                          {s.nome}
+                          <b style={S.subChipValor}>{brl(s.total)}</b>
+                        </span>
+                      ))}
+                    </div>
+                  )}
                   {itens.map(g => cartaoGasto(g, false))}
                 </div>
               );
@@ -2280,11 +2310,21 @@ function FolhaImpressao({ mes, renda, entradas, gastos, catPorId, totais }) {
       {Object.entries(grupos).map(([nome, itens]) => {
         const sub = itens.reduce((s, g) => s + Number(g.valor || 0), 0);
         const pct = renda > 0 ? ` · ${pctTxt((sub / renda) * 100)} da renda` : "";
+        // Mesma quebra por subcategoria que a tela mostra, para o papel não
+        // sair com menos informação do que o app.
+        const porSub = {};
+        itens.forEach(g => { if (g.subcategoria) porSub[g.subcategoria] = (porSub[g.subcategoria] || 0) + Number(g.valor || 0); });
+        const subs = Object.entries(porSub).sort((a, b) => b[1] - a[1]);
         return (
           <div key={nome} className="grupo" style={{ marginBottom: 16 }}>
             <h2 style={{ fontSize: "11pt", marginBottom: 4 }}>
               {nome} — {brl(sub)}<span style={{ fontWeight: 400, color: "#666" }}>{pct}</span>
             </h2>
+            {subs.length > 0 && (
+              <p style={{ fontSize: "9pt", color: "#555", marginBottom: 4 }}>
+                {subs.map(([n, v]) => `${n}: ${brl(v)}`).join("  ·  ")}
+              </p>
+            )}
             <table>
               <thead>
                 <tr><th style={{ width: "13%" }}>Dia</th><th>Gasto</th>
@@ -2369,6 +2409,10 @@ const S = {
   grupoNome: { fontWeight: 700, fontSize: 14, flex: 1, letterSpacing: "-0.01em" },
   grupoPct: { fontSize: 11, fontWeight: 600, color: "var(--texto-4)", background: "var(--superficie-2)", border: "1px solid var(--borda)", borderRadius: 99, padding: "1px 7px", fontVariantNumeric: "tabular-nums" },
   grupoTotal: { fontSize: 13, color: "var(--texto-3)", fontWeight: 600, fontVariantNumeric: "tabular-nums" },
+  subsLinha: { display: "flex", flexWrap: "wrap", gap: 6, padding: "2px 4px 6px" },
+  subChip: { display: "inline-flex", alignItems: "center", gap: 6, fontSize: 11.5, color: "var(--texto-4)", background: "var(--superficie-2)", border: "1px solid var(--borda)", borderRadius: 99, padding: "3px 9px" },
+  subChipVago: { borderStyle: "dashed", fontStyle: "italic" },
+  subChipValor: { color: "var(--texto-2)", fontWeight: 700, fontVariantNumeric: "tabular-nums" },
 
   item: { display: "flex", alignItems: "center", gap: 11, padding: "11px 13px", borderRadius: 12, border: "1px solid", transition: "background .15s" },
   check: { width: 24, height: 24, borderRadius: 7, border: "2px solid", cursor: "pointer", display: "grid", placeItems: "center", flexShrink: 0, transition: "all .15s" },
