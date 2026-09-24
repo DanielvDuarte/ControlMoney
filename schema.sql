@@ -140,7 +140,11 @@ create table if not exists public.lixeira (
 --  uma coluna nova precisa também de um `add column if not exists` aqui —
 --  é isso que a leva para os bancos criados antes dela.
 -- ============================================================
-alter table public.fixos add column if not exists valor numeric(12,2);
+alter table public.fixos  add column if not exists valor      numeric(12,2);
+alter table public.gastos add column if not exists observacao text not null default '';
+alter table public.gastos add column if not exists data       date;
+alter table public.gastos add column if not exists fitid      text;
+alter table public.gastos add column if not exists fixo_id    uuid references public.fixos(id) on delete set null;
 
 -- ============================================================
 --  ÍNDICES
