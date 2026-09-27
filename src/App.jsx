@@ -1489,9 +1489,9 @@ function ModalEntradas({ renda, entradas, mes, onFechar, onSalvarRenda, onAdicio
         <input style={{ ...S.input, flex: 1, minWidth: 0 }} value={descricao}
           onChange={ev => setDescricao(ev.target.value)}
           onKeyDown={ev => ev.key === "Enter" && incluir()}
-          placeholder="De onde veio? Ex: freela, reembolso" aria-label="Descrição da entrada" />
+          placeholder="De onde veio?" aria-label="Descrição da entrada" />
       </div>
-      <input type="date" style={{ ...S.input, marginTop: 8 }} value={data}
+      <input type="date" style={{ ...S.inputData, marginTop: 8 }} value={data}
         onChange={ev => setData(ev.target.value)}
         min={`${mes}-01`} max={`${mes}-${String(ultimoDia(mes)).padStart(2, "0")}`} />
       <button style={{ ...S.btnCriarCat, opacity: ocupado ? 0.5 : 1 }} disabled={ocupado} onClick={incluir}>
@@ -1501,7 +1501,7 @@ function ModalEntradas({ renda, entradas, mes, onFechar, onSalvarRenda, onAdicio
       {erro && <div style={S.erro}><AlertCircle size={14} /> {erro}</div>}
 
       <div style={S.entradaTotal}>
-        Gastos no mês <b style={{ color: "var(--verde-claro)" }}>{brl(total)}</b>
+        Renda total do mês <b style={{ color: "var(--verde-claro)" }}>{brl(total)}</b>
       </div>
 
       <div style={S.modalAcoes}>
@@ -1981,7 +1981,7 @@ function ModalGasto({ categorias, mes, editando, erroExterno, onCriarCategoria, 
       <CampoValor style={S.input} value={valor} onChange={setValor} />
 
       <label style={S.label}>Data {parcelas > 1 ? "(da primeira parcela)" : ""}</label>
-      <input type="date" style={S.input} value={data} onChange={e => setData(e.target.value)}
+      <input type="date" style={S.inputData} value={data} onChange={e => setData(e.target.value)}
         min={`${mes}-01`} max={`${mes}-${String(ultimoDia(mes)).padStart(2, "0")}`} />
       <p style={S.dicaCampo}>
         Vem preenchida com hoje. Mude se o gasto foi noutro dia — só dentro de {MESES[parseKey(mes).m]}.
@@ -3052,6 +3052,12 @@ const S = {
 
   label: { display: "block", fontSize: 12.5, fontWeight: 600, color: "var(--texto-3)", margin: "14px 0 6px" },
   input: { width: "100%", boxSizing: "border-box", background: "var(--superficie)", border: "1px solid var(--borda)", borderRadius: 10, padding: "11px 13px", color: "var(--texto)", fontSize: 15, outline: "none" },
+  // O iPhone dá ao input de data uma largura mínima própria e desenha o
+  // controle do jeito dele: com `width: 100%` sozinho, o campo estoura a
+  // caixa e a data aparece cortada. `minWidth: 0` solta essa largura mínima,
+  // e zerar a aparência nativa devolve o controle do tamanho ao nosso CSS.
+  inputData: { width: "100%", minWidth: 0, boxSizing: "border-box", display: "block", WebkitAppearance: "none", appearance: "none", background: "var(--superficie)", border: "1px solid var(--borda)", borderRadius: 10, padding: "11px 13px", color: "var(--texto)", fontSize: 15, fontFamily: "inherit", lineHeight: 1.3, outline: "none" },
+
   select: { flex: 1, background: "var(--superficie)", border: "1px solid var(--borda)", borderRadius: 10, padding: "11px 13px", color: "var(--texto)", fontSize: 15, outline: "none", cursor: "pointer" },
   linhaSelect: { display: "flex", gap: 8 },
   btnMini: { flexShrink: 0, background: "var(--campo)", border: "1px solid var(--borda)", borderRadius: 10, padding: "0 14px", color: "var(--texto-2)", fontSize: 13, fontWeight: 600, cursor: "pointer" },
