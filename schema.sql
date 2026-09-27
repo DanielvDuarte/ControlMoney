@@ -134,6 +134,20 @@ create table if not exists public.lixeira (
   removido_em timestamptz not null default now()
 );
 
+-- ---------- METAS (limite de gasto por categoria, no mês) ----------
+-- Uma linha por categoria e mês, criada só quando você define um limite.
+-- É por mês de propósito: dezembro não tem por que caber no mesmo teto de
+-- fevereiro. Sem linha aqui, a categoria simplesmente não tem meta.
+create table if not exists public.metas (
+  id           uuid primary key default gen_random_uuid(),
+  user_id      uuid not null default auth.uid() references auth.users(id) on delete cascade,
+  mes          text not null,              -- 'YYYY-MM'
+  categoria_id uuid not null references public.categorias(id) on delete cascade,
+  valor        numeric(12,2) not null default 0,
+  created_at   timestamptz not null default now(),
+  unique (user_id, mes, categoria_id)
+);
+
 -- ============================================================
 --  COLUNAS ADICIONADAS DEPOIS
 --  `create table if not exists` não mexe numa tabela que já existe, então
@@ -151,6 +165,7 @@ alter table public.gastos add column if not exists fixo_id    uuid references pu
 -- ============================================================
 create index if not exists entradas_user_mes_idx on public.entradas (user_id, mes);
 create index if not exists lixeira_user_idx      on public.lixeira  (user_id, removido_em desc);
+create index if not exists metas_user_mes_idx    on public.metas    (user_id, mes);
 create index if not exists gastos_user_mes_idx   on public.gastos   (user_id, mes);
 create index if not exists gastos_grupo_idx      on public.gastos   (grupo_parcela);
 create index if not exists gastos_fitid_idx      on public.gastos   (user_id, fitid);
@@ -170,6 +185,7 @@ alter table public.fixos         enable row level security;
 alter table public.entradas      enable row level security;
 alter table public.fixos_pulados enable row level security;
 alter table public.lixeira       enable row level security;
+alter table public.metas         enable row level security;
 
 -- ------------------------------------------------------------
 --  POLICIES
@@ -245,6 +261,16 @@ create policy "gasto_select" on public.gastos for select using (auth.uid() = use
 create policy "gasto_insert" on public.gastos for insert with check (auth.uid() = user_id);
 create policy "gasto_update" on public.gastos for update using (auth.uid() = user_id) with check (auth.uid() = user_id);
 create policy "gasto_delete" on public.gastos for delete using (auth.uid() = user_id);
+
+-- METAS
+drop policy if exists "meta_select" on public.metas;
+drop policy if exists "meta_insert" on public.metas;
+drop policy if exists "meta_update" on public.metas;
+drop policy if exists "meta_delete" on public.metas;
+create policy "meta_select" on public.metas for select using (auth.uid() = user_id);
+create policy "meta_insert" on public.metas for insert with check (auth.uid() = user_id);
+create policy "meta_update" on public.metas for update using (auth.uid() = user_id) with check (auth.uid() = user_id);
+create policy "meta_delete" on public.metas for delete using (auth.uid() = user_id);
 
 -- LIXEIRA
 -- Não há policy de update: um registro na lixeira é uma fotografia do que

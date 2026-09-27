@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
-import { Plus, Check, Trash2, ChevronLeft, ChevronRight, X, Pencil, AlertCircle, LogOut, Tags, Sparkles, Copy, ExternalLink, Upload, Download, Share, Sun, Moon, CloudOff, RefreshCw, Repeat, Pause, Play, Printer, TrendingUp, Undo2, RotateCcw } from "lucide-react";
+import { Plus, Check, Trash2, ChevronLeft, ChevronRight, X, Pencil, AlertCircle, LogOut, Tags, Sparkles, Copy, ExternalLink, Upload, Download, Share, Sun, Moon, CloudOff, RefreshCw, Repeat, Pause, Play, Printer, TrendingUp, Undo2, RotateCcw, Target } from "lucide-react";
 import { supabase } from "./lib/supabase";
 
 // ---------- helpers ----------
@@ -330,6 +330,8 @@ function Painel({ usuario }) {
   const [modalImportar, setModalImportar] = useState(false);
   const [modalFixos, setModalFixos] = useState(false);
   const [modalLixeira, setModalLixeira] = useState(false);
+  const [modalMetas, setModalMetas] = useState(false);
+  const [metas, setMetas] = useState({});          // categoria_id -> limite do mês
   const [pergunta, setPergunta] = useState(null);   // confirmação em aberto
   const respostaRef = useRef(null);                 // resolve() da confirmação
   const [aviso, setAviso] = useState(null);         // tarja de "desfazer"
@@ -399,14 +401,18 @@ function Painel({ usuario }) {
   const carregarMes = useCallback(async (mes) => {
     setCarregando(true);
     try {
-      const [g, r, a, e] = await Promise.all([
+      const [g, r, a, e, mt] = await Promise.all([
         supabase.from("gastos").select("*").eq("mes", mes)
           .order("data", { ascending: true, nullsFirst: false }).order("created_at"),
         supabase.from("meses").select("renda").eq("mes", mes).maybeSingle(),
         supabase.from("analises").select("texto").eq("mes", mes).maybeSingle(),
         supabase.from("entradas").select("*").eq("mes", mes).order("data", { ascending: true, nullsFirst: false }),
+        supabase.from("metas").select("categoria_id, valor").eq("mes", mes),
       ]);
       if (g.error || r.error || a.error || e.error) throw (g.error || r.error || a.error || e.error);
+      // A meta é um extra: num banco que ainda não rodou o schema novo, a
+      // tabela não existe — o mês abre igual, só sem meta nenhuma.
+      setMetas(Object.fromEntries((mt.data || []).map(m => [m.categoria_id, Number(m.valor)])));
 
       // Completa o que falta de conta fixa neste mês. Passamos o que já veio
       // para não perguntar duas vezes a mesma coisa ao banco.
@@ -637,6 +643,30 @@ function Painel({ usuario }) {
     }
     await carregarMes(mesAtual);
   };
+
+  // Meta zerada não é meta: em vez de guardar um limite de R$ 0 — que deixaria
+  // a categoria sempre "estourada" — a linha sai da tabela.
+  const definirMeta = async (categoriaId, valor) => {
+    const v = Number(valor) || 0;
+    setMetas(m => {
+      const novo = { ...m };
+      if (v > 0) novo[categoriaId] = v; else delete novo[categoriaId];
+      return novo;
+    });
+    const { error } = v > 0
+      ? await supabase.from("metas").upsert(
+          { user_id: usuario.id, mes: mesAtual, categoria_id: categoriaId, valor: v },
+          { onConflict: "user_id,mes,categoria_id" })
+      : await supabase.from("metas").delete().eq("mes", mesAtual).eq("categoria_id", categoriaId);
+    return error;
+  };
+
+  // Gasto de cada categoria no mês, para a meta se comparar com ele.
+  const gastoPorCategoria = useMemo(() => {
+    const somas = {};
+    gastos.forEach(g => { if (g.categoria_id) somas[g.categoria_id] = (somas[g.categoria_id] || 0) + Number(g.valor || 0); });
+    return somas;
+  }, [gastos]);
 
   const togglePago = async (g) => {
     setGastos(gs => gs.map(x => x.id === g.id ? { ...x, pago: !x.pago } : x)); // otimista
@@ -1152,6 +1182,9 @@ function Painel({ usuario }) {
           <button style={S.btnSecundario} onClick={() => setModalFixos(true)}>
             <Repeat size={14} /> Contas fixas{fixos.length ? ` (${fixos.length})` : ""}
           </button>
+          <button style={S.btnSecundario} onClick={() => setModalMetas(true)}>
+            <Target size={14} /> Metas{Object.keys(metas).length ? ` (${Object.keys(metas).length})` : ""}
+          </button>
           <button style={S.btnSecundario} onClick={() => setModalImportar(true)}>
             <Upload size={14} /> Importar OFX
           </button>
@@ -1185,7 +1218,12 @@ function Painel({ usuario }) {
             <div style={S.grupo}>{listaCorrida.map(g => cartaoGasto(g, true))}</div>
           ) : (
             porCategoria.map(({ nome: cat, itens, subtotal, subs }) => {
-              const cor = categorias.find(c => c.nome === cat)?.cor || "var(--texto-4)";
+              const catObj = categorias.find(c => c.nome === cat);
+              const cor = catObj?.cor || "var(--texto-4)";
+              const meta = metas[catObj?.id] || 0;
+              const sobra = meta - subtotal;
+              // Verde enquanto sobra folga, âmbar na reta final, vermelho ao passar.
+              const tomMeta = sobra < 0 ? "var(--vermelho)" : subtotal / meta >= 0.8 ? "var(--ambar)" : "var(--verde)";
               // Sem renda informada não há do que tirar porcentagem.
               const pct = rendaTotal > 0 ? (subtotal / rendaTotal) * 100 : null;
               return (
@@ -1196,6 +1234,20 @@ function Painel({ usuario }) {
                     {pct !== null && <span style={S.grupoPct} title={`${cat} consome ${pctTxt(pct)} da renda do mês`}>{pctTxt(pct)}</span>}
                     <span style={S.grupoTotal}>{brl(subtotal)}</span>
                   </div>
+                  {meta > 0 && (
+                    <button style={S.metaLinha} onClick={() => setModalMetas(true)}
+                      title={`Meta de ${cat} neste mês: ${brl(meta)}. Toque para ajustar.`}>
+                      <span style={S.metaBarra}>
+                        <span style={{ ...S.metaFill, width: `${Math.min(100, (subtotal / meta) * 100)}%`, background: tomMeta }} />
+                      </span>
+                      <span style={{ ...S.metaTexto, color: tomMeta }}>
+                        {sobra >= 0
+                          ? `ainda dá para gastar ${brl(sobra)}`
+                          : `passou ${brl(-sobra)}`}
+                        <span style={S.metaDe}> · meta {brl(meta)}</span>
+                      </span>
+                    </button>
+                  )}
                   {subs.length > 0 && (
                     <div style={S.subsLinha}>
                       {subs.map(s => (
@@ -1236,6 +1288,9 @@ function Painel({ usuario }) {
         onPreparar={prepararImportacao} onImportar={importarGastos} />}
       {modalFixos && <ModalFixos fixos={fixos} categorias={categorias} onFechar={() => setModalFixos(false)}
         onAlterar={alterarFixo} onValor={definirValorFixo} onRemover={removerFixo} />}
+      {modalMetas && <ModalMetas categorias={categorias} metas={metas} mes={mesAtual}
+        gastoPorCategoria={gastoPorCategoria} renda={rendaTotal}
+        onDefinir={definirMeta} onFechar={() => setModalMetas(false)} />}
       {modalLixeira && <ModalLixeira onFechar={() => setModalLixeira(false)}
         onPerguntar={perguntar}
         onMudou={() => { carregarCategorias(); carregarMes(mesAtual); }} />}
@@ -1292,9 +1347,10 @@ function ModalEntradas({ renda, entradas, mes, onFechar, onSalvarRenda, onAdicio
       <p style={S.modalAjuda}>É sobre a soma delas que o saldo é calculado.</p>
 
       <label style={S.label}>Renda fixa (salário)</label>
-      <input type="number" inputMode="decimal" style={S.input} value={v}
-        onChange={e => setV(e.target.value)} onBlur={() => onSalvarRenda(v)}
-        onKeyDown={e => e.key === "Enter" && e.target.blur()} placeholder="0,00" />
+      <CampoValor style={S.input} value={v} onChange={setV}
+        onBlur={() => onSalvarRenda(v)}
+        onKeyDown={e => e.key === "Enter" && e.target.blur()}
+        aria-label="Renda fixa do mês" />
 
       <div style={S.passo}><span style={S.passoNum}>+</span> Outras entradas</div>
 
@@ -1316,8 +1372,8 @@ function ModalEntradas({ renda, entradas, mes, onFechar, onSalvarRenda, onAdicio
       )}
 
       <div style={S.entradaForm}>
-        <input type="number" inputMode="decimal" style={{ ...S.input, flex: "0 0 110px" }} value={valor}
-          onChange={ev => setValor(ev.target.value)} placeholder="0,00" aria-label="Valor da entrada" />
+        <CampoValor style={{ ...S.input, flex: "0 0 110px" }} value={valor} onChange={setValor}
+          aria-label="Valor da entrada" />
         <input style={{ ...S.input, flex: 1, minWidth: 0 }} value={descricao}
           onChange={ev => setDescricao(ev.target.value)}
           onKeyDown={ev => ev.key === "Enter" && incluir()}
@@ -1920,6 +1976,95 @@ function ModalGasto({ categorias, mes, editando, erroExterno, onCriarCategoria, 
 }
 
 // ------------------------------------------------------------
+//  Metas do mês
+//  Um limite por categoria, só para o mês aberto. A tela mostra ao lado o
+//  que já foi gasto, porque definir um teto sem ver o gasto atual é chutar.
+// ------------------------------------------------------------
+function LinhaMeta({ cat, meta, gasto, onDefinir }) {
+  const [v, setV] = useState(meta || "");
+  const [erro, setErro] = useState("");
+
+  const guardar = async () => {
+    if ((Number(v) || 0) === (Number(meta) || 0)) return;
+    const e = await onDefinir(cat.id, v);
+    setErro(!e ? ""
+      : /metas|relation|schema cache/i.test(e.message)
+        ? "O banco ainda não tem a tabela de metas: rode o schema.sql no Supabase."
+        : "Não consegui guardar: " + e.message);
+  };
+
+  const limite = Number(v) || 0;
+  const sobra = limite - gasto;
+
+  return (
+    <div style={S.metaLinhaModal}>
+      <div style={S.metaTopo}>
+        <span style={{ ...S.dot, background: cat.cor }} />
+        <span style={S.metaNome}>{cat.nome}</span>
+        <CampoValor style={S.metaCampo} value={v} onChange={setV} onBlur={guardar}
+          aria-label={`Meta de ${cat.nome}`} />
+      </div>
+      <div style={S.metaAbaixo}>
+        {limite > 0
+          ? <>gasto {brl(gasto)} · {sobra >= 0 ? `ainda dá para gastar ${brl(sobra)}` : `passou ${brl(-sobra)}`}</>
+          : <>gasto {brl(gasto)} · sem meta</>}
+      </div>
+      {erro && <div style={{ ...S.erro, marginTop: 6, fontSize: 12 }}><AlertCircle size={13} /><span>{erro}</span></div>}
+    </div>
+  );
+}
+
+function ModalMetas({ categorias, metas, gastoPorCategoria, mes, renda, onDefinir, onFechar }) {
+  const { y, m } = parseKey(mes);
+  const comMeta = categorias.filter(c => metas[c.id] > 0);
+  const totalMetas = comMeta.reduce((s, c) => s + metas[c.id], 0);
+  const gastoNasMetas = comMeta.reduce((s, c) => s + (gastoPorCategoria[c.id] || 0), 0);
+
+  return (
+    <Overlay onFechar={onFechar}>
+      <h2 style={S.modalTitulo}>Metas de {MESES[m]}</h2>
+      <p style={S.modalAjuda}>
+        Quanto você quer gastar em cada categoria neste mês. Vale só para{" "}
+        {MESES[m]} de {y}: um mês não precisa caber no mesmo teto do outro.
+        Deixe vazio nas categorias que você não quer limitar.
+      </p>
+
+      {categorias.length === 0 ? (
+        <div style={S.catVazio}>Nenhuma categoria ainda. Elas nascem quando você lança um gasto.</div>
+      ) : (
+        <>
+          {comMeta.length > 0 && (
+            <div style={S.fixoTotal}>
+              <div>
+                <div style={S.fixoTotalRotulo}>Somando as metas</div>
+                <div style={S.fixoTotalNota}>
+                  {brl(gastoNasMetas)} já gastos{renda > 0 ? ` · ${pctTxt((totalMetas / renda) * 100)} da renda` : ""}
+                </div>
+              </div>
+              <div style={S.fixoTotalValor}>{brl(totalMetas)}</div>
+            </div>
+          )}
+          <div style={S.catLista}>
+            {categorias.map(c => (
+              <LinhaMeta key={c.id} cat={c} meta={metas[c.id] || 0}
+                gasto={gastoPorCategoria[c.id] || 0} onDefinir={onDefinir} />
+            ))}
+          </div>
+          <p style={S.dicaCampo}>
+            A meta aparece no cabeçalho da categoria, na lista do mês, com a barra
+            do quanto já foi. Ela não impede nenhum lançamento — só mostra onde você está.
+          </p>
+        </>
+      )}
+
+      <div style={S.modalAcoes}>
+        <button style={S.btnSec} onClick={onFechar}>Fechar</button>
+      </div>
+    </Overlay>
+  );
+}
+
+// ------------------------------------------------------------
 //  Campo de dinheiro
 //  Os dígitos entram pela direita, como numa maquininha de cartão: digitar
 //  1, 2, 3, 4 dá 12,34. Não existe vírgula para esquecer nem para pôr no
@@ -2422,6 +2567,17 @@ const S = {
   itemSub: { fontSize: 12, color: "var(--texto-4)", marginTop: 1 },
   itemData: { fontVariantNumeric: "tabular-nums", color: "var(--texto-3)" },
   itemCat: { display: "inline-flex", alignItems: "center", gap: 5 },
+
+  metaLinha: { display: "flex", alignItems: "center", gap: 8, width: "100%", background: "transparent", border: "none", padding: "0 4px 4px", cursor: "pointer", textAlign: "left" },
+  metaBarra: { flex: 1, height: 4, background: "var(--campo-borda)", borderRadius: 99, overflow: "hidden" },
+  metaFill: { display: "block", height: "100%", borderRadius: 99, transition: "width .3s ease" },
+  metaTexto: { fontSize: 11.5, fontWeight: 600, whiteSpace: "nowrap", fontVariantNumeric: "tabular-nums" },
+  metaDe: { color: "var(--texto-5)", fontWeight: 500 },
+  metaLinhaModal: { border: "1px solid var(--borda)", background: "var(--superficie)", borderRadius: 11, padding: "10px 12px" },
+  metaTopo: { display: "flex", alignItems: "center", gap: 9 },
+  metaNome: { flex: 1, minWidth: 0, fontSize: 14, fontWeight: 600, overflowWrap: "anywhere" },
+  metaCampo: { width: 112, boxSizing: "border-box", background: "var(--campo)", border: "1px solid var(--campo-borda)", borderRadius: 8, padding: "6px 9px", color: "var(--texto)", fontSize: 13.5, textAlign: "right", fontVariantNumeric: "tabular-nums", outline: "none", flexShrink: 0 },
+  metaAbaixo: { fontSize: 11.5, color: "var(--texto-4)", marginTop: 6, fontVariantNumeric: "tabular-nums" },
   dotMini: { width: 7, height: 7, borderRadius: 99, flexShrink: 0 },
   dicaCampo: { fontSize: 11.5, color: "var(--texto-4)", marginTop: 5, lineHeight: 1.45 },
   itemObs: { fontSize: 12, color: "var(--ambar-texto)", marginTop: 3, lineHeight: 1.45, overflowWrap: "anywhere" },
@@ -2442,8 +2598,10 @@ const S = {
   conviteTexto: { fontSize: 12, color: "var(--texto-4)", marginTop: 2, lineHeight: 1.45 },
   conviteBtn: { background: "var(--verde)", border: "none", borderRadius: 9, padding: "8px 13px", color: "var(--sobre-verde)", fontSize: 13, fontWeight: 700, cursor: "pointer", flexShrink: 0 },
 
-  linhaSecundaria: { display: "flex", gap: 8, marginTop: -8, marginBottom: 18 },
-  btnSecundario: { flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 6, background: "transparent", border: "1px dashed var(--borda)", borderRadius: 12, padding: "10px 6px", color: "var(--texto-4)", fontSize: 13, fontWeight: 600, cursor: "pointer" },
+  // Quatro botões não cabem lado a lado no celular: com wrap eles viram 2x2 lá
+  // e continuam numa linha só no computador.
+  linhaSecundaria: { display: "flex", flexWrap: "wrap", gap: 8, marginTop: -8, marginBottom: 18 },
+  btnSecundario: { flex: "1 1 140px", display: "flex", alignItems: "center", justifyContent: "center", gap: 6, background: "transparent", border: "1px dashed var(--borda)", borderRadius: 12, padding: "10px 6px", color: "var(--texto-4)", fontSize: 13, fontWeight: 600, cursor: "pointer" },
   seloFixa: { fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.04em", color: "var(--azul)", background: "color-mix(in srgb, var(--azul) 14%, transparent)", borderRadius: 99, padding: "1px 6px", flexShrink: 0 },
   avisoFixo: { display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginTop: 18, fontSize: 12.5, lineHeight: 1.5, color: "var(--azul)", background: "color-mix(in srgb, var(--azul) 10%, transparent)", border: "1px solid color-mix(in srgb, var(--azul) 28%, transparent)", borderRadius: 11, padding: "10px 12px" },
   caixaFixo: { display: "flex", alignItems: "center", gap: 10, marginTop: 18, background: "var(--recuo)", border: "1px solid var(--borda)", borderRadius: 11, padding: "12px 13px", fontSize: 14, cursor: "pointer" },

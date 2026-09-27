@@ -39,6 +39,13 @@ No ar em **https://danielvduarte.github.io/ControlMoney/**
   por maior valor. A escolha fica salva no aparelho.
 - Campo de valor com a vírgula automática: os dígitos entram pela direita, como
   numa maquininha (1, 2, 3, 4 → 12,34), então não dá para errar a casa decimal.
+  Vale em todos os campos de dinheiro — gasto, renda fixa, entrada avulsa e
+  valor da conta fixa.
+- **Metas por categoria**: defina quanto quer gastar em cada categoria naquele
+  mês. O cabeçalho da categoria passa a mostrar uma barra com o quanto já foi e
+  quanto ainda dá para gastar — em âmbar na reta final, em vermelho se passou.
+  A meta é de um mês só (dezembro não precisa caber no teto de fevereiro) e não
+  impede nenhum lançamento: ela mostra onde você está, não bloqueia.
 - Observação livre por gasto ("negociado até dezembro", "conferir reajuste"),
   que aparece na lista e vai junto no resumo levado ao Claude.
 - Editar um gasto parcelado corrige a série inteira — dá para consertar
