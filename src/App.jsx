@@ -331,6 +331,7 @@ function Painel({ usuario }) {
   const [modalFixos, setModalFixos] = useState(false);
   const [modalLixeira, setModalLixeira] = useState(false);
   const [modalMetas, setModalMetas] = useState(false);
+  const [modalPerfil, setModalPerfil] = useState(false);
   const [metas, setMetas] = useState({});          // categoria_id -> limite do mês
   const [pergunta, setPergunta] = useState(null);   // confirmação em aberto
   const respostaRef = useRef(null);                 // resolve() da confirmação
@@ -1202,7 +1203,13 @@ function Painel({ usuario }) {
             <button style={S.btnNav} onClick={() => setModalCategorias(true)} aria-label="Categorias"><Tags size={16} /></button>
             <button style={S.btnNav} onClick={() => setModalLixeira(true)}
               aria-label="Lixeira" title="Lixeira — ver e restaurar o que foi apagado"><Trash2 size={16} /></button>
-            <button style={S.btnNav} onClick={() => supabase.auth.signOut()} aria-label="Sair"><LogOut size={16} /></button>
+            {/* No lugar do antigo botão de sair: aqui dá para conferir em qual
+                conta você está antes de lançar qualquer coisa. */}
+            <button style={S.btnPerfil} onClick={() => setModalPerfil(true)}
+              aria-label={`Conta: ${usuario.email || "sem e-mail"}`}
+              title={`Você está em ${usuario.email || "esta conta"}. Toque para trocar ou sair.`}>
+              <Avatar usuario={usuario} tamanho={26} />
+            </button>
           </div>
         </header>
 
@@ -1349,6 +1356,7 @@ function Painel({ usuario }) {
         onPreparar={prepararImportacao} onImportar={importarGastos} />}
       {modalFixos && <ModalFixos fixos={fixos} categorias={categorias} onFechar={() => setModalFixos(false)}
         onAlterar={alterarFixo} onValor={definirValorFixo} onRemover={removerFixo} />}
+      {modalPerfil && <ModalPerfil usuario={usuario} onFechar={() => setModalPerfil(false)} />}
       {modalMetas && <ModalMetas categorias={categorias} metas={metas} mes={mesAtual}
         gastoPorCategoria={gastoPorCategoria} renda={rendaTotal}
         onDefinir={definirMeta} onFechar={() => setModalMetas(false)} />}
@@ -2046,6 +2054,71 @@ function ModalGasto({ categorias, mes, editando, erroExterno, onCriarCategoria, 
 }
 
 // ------------------------------------------------------------
+//  Conta
+//  Cada conta tem os seus próprios dados, e nada é compartilhado entre elas.
+//  Quem usa mais de uma (a sua e a de casa, por exemplo) precisa conseguir
+//  ver de relance em qual está — senão lança na conta errada e parece que
+//  os gastos "sumiram".
+// ------------------------------------------------------------
+function Avatar({ usuario, tamanho = 26 }) {
+  const foto = usuario.user_metadata?.avatar_url || usuario.user_metadata?.picture;
+  const nome = usuario.user_metadata?.full_name || usuario.user_metadata?.name || "";
+  const inicial = (nome || usuario.email || "?").trim()[0]?.toUpperCase() || "?";
+  const estilo = { width: tamanho, height: tamanho, borderRadius: 99, flexShrink: 0 };
+
+  if (foto) return <img src={foto} alt="" style={{ ...estilo, objectFit: "cover" }} referrerPolicy="no-referrer" />;
+  return (
+    <span style={{ ...estilo, ...S.avatarLetra, fontSize: Math.round(tamanho * 0.45) }}>{inicial}</span>
+  );
+}
+
+function ModalPerfil({ usuario, onFechar }) {
+  const [saindo, setSaindo] = useState("");
+  const nome = usuario.user_metadata?.full_name || usuario.user_metadata?.name || "";
+  const provedor = usuario.app_metadata?.provider === "google" ? "conta Google" : "e-mail e senha";
+
+  // Trocar de conta e sair são a mesma operação por baixo: o Supabase guarda
+  // uma sessão por navegador. A diferença é o que a pessoa faz depois, e é
+  // por isso que os dois botões existem, com textos diferentes.
+  const sair = async (modo) => {
+    setSaindo(modo);
+    await supabase.auth.signOut();
+  };
+
+  return (
+    <Overlay onFechar={onFechar}>
+      <h2 style={S.modalTitulo}>Sua conta</h2>
+      <p style={S.modalAjuda}>Os lançamentos são desta conta. Outra conta tem os dados dela, separados.</p>
+
+      <div style={S.perfilCartao}>
+        <Avatar usuario={usuario} tamanho={44} />
+        <div style={{ flex: 1, minWidth: 0 }}>
+          {nome && <div style={S.perfilNome}>{nome}</div>}
+          <div style={nome ? S.perfilEmail : S.perfilNome}>{usuario.email || "sem e-mail"}</div>
+          <div style={S.perfilMeta}>entrou com {provedor}</div>
+        </div>
+      </div>
+
+      <button style={S.perfilTrocar} disabled={!!saindo} onClick={() => sair("trocar")}>
+        <RefreshCw size={15} /> {saindo === "trocar" ? "Saindo…" : "Trocar de conta"}
+      </button>
+      <p style={S.dicaCampo}>
+        Leva de volta para a tela de entrada, onde você escolhe a outra conta.
+        Nada é apagado: os dados de cada uma ficam guardados no servidor.
+      </p>
+
+      <div style={S.modalAcoes}>
+        <button style={S.btnSec} onClick={onFechar}>Fechar</button>
+        <button style={{ ...S.btnSec, color: "var(--vermelho)", display: "flex", alignItems: "center", justifyContent: "center", gap: 7 }}
+          disabled={!!saindo} onClick={() => sair("sair")}>
+          <LogOut size={15} /> {saindo === "sair" ? "Saindo…" : "Sair"}
+        </button>
+      </div>
+    </Overlay>
+  );
+}
+
+// ------------------------------------------------------------
 //  Metas do mês
 //  Um limite por categoria, só para o mês aberto. A tela mostra ao lado o
 //  que já foi gasto, porque definir um teto sem ver o gasto atual é chutar.
@@ -2604,6 +2677,14 @@ const S = {
   header: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, flexWrap: "wrap", marginBottom: 18 },
   marca: { display: "flex", alignItems: "center", gap: 8, fontWeight: 700, fontSize: 17, letterSpacing: "-0.01em" },
   btnNav: { width: 34, height: 34, borderRadius: 9, border: "1px solid var(--borda)", background: "var(--superficie)", color: "var(--texto-2)", display: "grid", placeItems: "center", cursor: "pointer" },
+  btnPerfil: { width: 34, height: 34, borderRadius: 99, border: "1px solid var(--borda)", background: "var(--superficie)", padding: 0, display: "grid", placeItems: "center", cursor: "pointer", flexShrink: 0 },
+  avatarLetra: { display: "grid", placeItems: "center", background: "var(--verde)", color: "var(--sobre-verde)", fontWeight: 800, letterSpacing: "-0.02em" },
+  perfilCartao: { display: "flex", alignItems: "center", gap: 12, background: "var(--superficie-2)", border: "1px solid var(--borda)", borderRadius: 12, padding: "12px 14px", marginBottom: 14 },
+  perfilNome: { fontSize: 15, fontWeight: 700, overflowWrap: "anywhere" },
+  perfilEmail: { fontSize: 13, color: "var(--texto-3)", overflowWrap: "anywhere", marginTop: 1 },
+  perfilMeta: { fontSize: 11.5, color: "var(--texto-4)", marginTop: 3 },
+  perfilTrocar: { display: "flex", alignItems: "center", justifyContent: "center", gap: 8, width: "100%", background: "var(--botao-neutro)", border: "1px solid var(--borda)", borderRadius: 11, padding: "12px", color: "var(--texto)", fontSize: 14.5, fontWeight: 700, cursor: "pointer" },
+
   mesLabel: { minWidth: 118, textAlign: "center", fontWeight: 600, fontSize: 15 },
 
   heroSaldo: { border: "1px solid", borderRadius: 18, padding: "20px 22px", background: "linear-gradient(160deg,var(--modal),var(--modal2))", marginBottom: 14 },

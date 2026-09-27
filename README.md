@@ -12,6 +12,10 @@ No ar em **https://danielvduarte.github.io/ControlMoney/**
 ## O que faz
 
 - Login por e-mail/senha ou conta Google; cada usuário só vê os próprios dados (RLS no Postgres).
+- **Botão de conta** no cabeçalho, com a foto (ou a inicial) de quem está
+  logado: mostra o e-mail da conta atual e traz **Trocar de conta** e **Sair**.
+  Quem usa mais de uma conta confere antes de lançar, em vez de descobrir
+  depois que os gastos foram parar na outra.
 - Gastos por categoria e subcategoria — criáveis na hora ao lançar, e
   renomeáveis ou apagáveis pelo botão de categorias no cabeçalho.
 - **Contas fixas** (água, luz, internet, aluguel): marque "Repetir todo mês" ao
