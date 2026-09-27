@@ -728,6 +728,41 @@ function Painel({ usuario }) {
     carregarMes(mesAtual);
   };
 
+  // Recomeçar o mês: tudo de uma vez, em vez de item por item. Passa pela
+  // lixeira como qualquer remoção, então um clique errado aqui não é o fim —
+  // a tarja de desfazer traz os lançamentos todos de volta.
+  const limparMes = async () => {
+    if (!gastos.length) return;
+    const escolha = await perguntar({
+      titulo: `Apagar os ${gastos.length} gastos de ${MESES[m]}?`,
+      texto: `Somam ${brl(totais.total)}. A renda, as entradas avulsas e as metas do mês não são tocadas, ` +
+             `e as contas fixas voltam a ser lançadas nos próximos meses.`,
+      nota: `Tudo vai para a lixeira e pode voltar de lá por ${DIAS_LIXEIRA} dias.`,
+      acoes: [{ id: "limpar", rotulo: `Apagar os ${gastos.length}`, tom: "perigo" }],
+    });
+    if (escolha !== "limpar") return;
+
+    let ids = [];
+    const alvos = gastos;
+    try {
+      ids = await paraLixeira("gastos", alvos);
+      const deFixa = alvos.filter(a => a.fixo_id);
+      if (deFixa.length) {
+        await supabase.from("fixos_pulados").upsert(
+          deFixa.map(a => ({ user_id: usuario.id, fixo_id: a.fixo_id, mes: a.mes })),
+          { onConflict: "user_id,fixo_id,mes", ignoreDuplicates: true });
+      }
+      const { error } = await supabase.from("gastos").delete().in("id", alvos.map(a => a.id));
+      if (error) throw error;
+      avisarDesfazer(`${alvos.length} gastos de ${MESES[m]} removidos`, ids);
+    } catch (err) {
+      if (ids.length) await supabase.from("lixeira").delete().in("id", ids);
+      setAviso({ texto: "Não consegui apagar: " + (err?.message || err), ids: [] });
+    }
+    setModalLixeira(false);
+    carregarMes(mesAtual);
+  };
+
   const garantirCategoria = async (nome, corSugerida) => {
     const existente = categorias.find(c => c.nome.toLowerCase() === nome.toLowerCase());
     if (existente) return existente;
@@ -961,11 +996,15 @@ function Painel({ usuario }) {
   // antes (pelo FITID) e sugere categoria a partir do que já foi classificado.
   const prepararImportacao = async (transacoes) => {
     const chaves = transacoes.map(t => t.chave);
-    const [jaVistos, hist] = await Promise.all([
-      supabase.from("gastos").select("fitid").in("fitid", chaves.length ? chaves : ["-"]),
+    const vazio = chaves.length ? chaves : ["-"];
+    // A trava contra importar duas vezes vale nas duas tabelas: um crédito já
+    // importado virou entrada, e não estaria em `gastos`.
+    const [jaVistos, jaEntraram, hist] = await Promise.all([
+      supabase.from("gastos").select("fitid").in("fitid", vazio),
+      supabase.from("entradas").select("fitid").in("fitid", vazio),
       supabase.from("gastos").select("nome, categoria_id, subcategoria").not("categoria_id", "is", null).order("created_at", { ascending: false }).limit(500),
     ]);
-    const importados = new Set((jaVistos.data || []).map(g => g.fitid));
+    const importados = new Set([...(jaVistos.data || []), ...(jaEntraram.data || [])].map(g => g.fitid));
     const sugestao = {};
     (hist.data || []).forEach(g => {
       const k = chaveDesc(g.nome);
@@ -978,8 +1017,11 @@ function Painel({ usuario }) {
     }));
   };
 
+  // O extrato traz os dois sinais. Crédito é dinheiro que entrou (salário,
+  // reembolso, estorno) e vira entrada avulsa, não gasto — importado como
+  // gasto ele aparecia somando despesa, com o sinal trocado.
   const importarGastos = async (linhas) => {
-    const novos = linhas.map(l => ({
+    const saidas = linhas.filter(l => !l.credito).map(l => ({
       user_id: usuario.id,
       mes: l.mes,
       data: `${l.mes}-${l.dia}`,
@@ -990,8 +1032,27 @@ function Painel({ usuario }) {
       pago: true,                 // saiu do extrato, então já saiu da conta
       fitid: l.chave,
     }));
-    const { error } = await supabase.from("gastos").insert(novos);
-    if (error) throw error;
+    const entradasNovas = linhas.filter(l => l.credito).map(l => ({
+      user_id: usuario.id,
+      mes: l.mes,
+      data: `${l.mes}-${l.dia}`,
+      descricao: l.desc,
+      valor: Math.abs(Number(l.valor)),
+      fitid: l.chave,
+    }));
+
+    if (saidas.length) {
+      const { error } = await supabase.from("gastos").insert(saidas);
+      if (error) throw error;
+    }
+    if (entradasNovas.length) {
+      const { error } = await supabase.from("entradas").insert(entradasNovas);
+      if (error) throw new Error(
+        /fitid|column/i.test(error.message)
+          ? `as saídas entraram, mas as entradas não: o banco ainda não tem a coluna fitid em entradas. Rode o schema.sql no Supabase. (${error.message})`
+          : error.message
+      );
+    }
     setModalImportar(false);
     await carregarMes(mesAtual);
   };
@@ -1292,7 +1353,7 @@ function Painel({ usuario }) {
         gastoPorCategoria={gastoPorCategoria} renda={rendaTotal}
         onDefinir={definirMeta} onFechar={() => setModalMetas(false)} />}
       {modalLixeira && <ModalLixeira onFechar={() => setModalLixeira(false)}
-        onPerguntar={perguntar}
+        onPerguntar={perguntar} mes={mesAtual} quantosNoMes={gastos.length} onLimparMes={limparMes}
         onMudou={() => { carregarCategorias(); carregarMes(mesAtual); }} />}
 
       {/* A tarja de desfazer fica acima do botão de novo gasto, e some sozinha. */}
@@ -1542,7 +1603,9 @@ function ModalImportar({ categorias, onFechar, onPreparar, onImportar }) {
 
   const visiveis = (linhas || []).filter(l => mostrarCreditos || !l.credito);
   const escolhidas = (linhas || []).filter(l => l.marcada && !l.jaImportada);
-  const totalEscolhido = escolhidas.reduce((s, l) => s + Math.abs(Number(l.valor)), 0);
+  const saidas = escolhidas.filter(l => !l.credito);
+  const entradas = escolhidas.filter(l => l.credito);
+  const totalDe = (ls) => ls.reduce((s, l) => s + Math.abs(Number(l.valor)), 0);
   const repetidas = (linhas || []).filter(l => l.jaImportada).length;
 
   const mudar = (chave, campo, valor) =>
@@ -1589,7 +1652,7 @@ function ModalImportar({ categorias, onFechar, onPreparar, onImportar }) {
           <div style={S.impBarra}>
             <label style={S.impCheckLabel}>
               <input type="checkbox" checked={mostrarCreditos} onChange={e => setMostrarCreditos(e.target.checked)} />
-              mostrar entradas
+              mostrar entradas (créditos)
             </label>
             <select style={{ ...S.select, flex: 1, minWidth: 0 }} value={catLote} onChange={e => aplicarLote(e.target.value)}>
               <option value="">categoria para as marcadas…</option>
@@ -1612,9 +1675,11 @@ function ModalImportar({ categorias, onFechar, onPreparar, onImportar }) {
                   <div style={S.impDesc}>{l.desc}</div>
                   <div style={S.impMeta}>
                     dia {l.dia} · {l.mes}
+                    {l.credito && " · entra como entrada avulsa, somando na renda"}
                     {l.jaImportada && " · já importada"}
                   </div>
-                  {!l.jaImportada && l.marcada && (
+                  {/* Entrada avulsa não tem categoria: o seletor só faz sentido na saída. */}
+                  {!l.jaImportada && l.marcada && !l.credito && (
                     <select style={{ ...S.select, marginTop: 6, fontSize: 13, padding: "6px 8px" }}
                       value={l.categoria_id || ""} onChange={e => mudar(l.chave, "categoria_id", e.target.value)}>
                       <option value="">— sem categoria —</option>
@@ -1632,7 +1697,12 @@ function ModalImportar({ categorias, onFechar, onPreparar, onImportar }) {
           {erro && <div style={S.erro}><AlertCircle size={14} /> {erro}</div>}
 
           <div style={S.impResumo}>
-            {escolhidas.length} selecionada{escolhidas.length === 1 ? "" : "s"} · {brl(totalEscolhido)}
+            {saidas.length} saída{saidas.length === 1 ? "" : "s"} · {brl(totalDe(saidas))}
+            {entradas.length > 0 && (
+              <div style={{ color: "var(--verde-claro)" }}>
+                {entradas.length} entrada{entradas.length === 1 ? "" : "s"} · +{brl(totalDe(entradas))}
+              </div>
+            )}
           </div>
           <div style={S.modalAcoes}>
             <button style={S.btnSec} onClick={() => setLinhas(null)}>Outro arquivo</button>
@@ -2136,7 +2206,7 @@ function ModalConfirmar({ titulo, texto, nota, acoes = [], onResponder }) {
 // ------------------------------------------------------------
 //  Lixeira
 // ------------------------------------------------------------
-function ModalLixeira({ onFechar, onPerguntar, onMudou }) {
+function ModalLixeira({ onFechar, onPerguntar, onMudou, mes, quantosNoMes, onLimparMes }) {
   const [itens, setItens] = useState(null);   // null = ainda carregando
   const [erro, setErro] = useState("");
   const [nota, setNota] = useState("");
@@ -2213,6 +2283,15 @@ function ModalLixeira({ onFechar, onPerguntar, onMudou }) {
 
       {erro && <div style={S.erro}><AlertCircle size={15} /><span>{erro}</span></div>}
       {nota && <div style={S.lixNota}>{nota}</div>}
+
+      {/* Lançou o mês inteiro errado? Em vez de apagar um por um, tudo de uma
+          vez — e, como tudo aqui, passando pela lixeira. */}
+      {quantosNoMes > 0 && (
+        <button style={S.lixRecomecar} onClick={onLimparMes}>
+          <Trash2 size={14} />
+          Recomeçar {MESES[parseKey(mes).m]}: apagar os {quantosNoMes} gastos do mês
+        </button>
+      )}
 
       {itens === null ? (
         <div style={S.catVazio}>Carregando…</div>
@@ -2677,6 +2756,7 @@ const S = {
   lixValor: { fontSize: 13, fontWeight: 700, fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap", flexShrink: 0 },
   lixRestaurar: { display: "inline-flex", alignItems: "center", gap: 5, flexShrink: 0, background: "var(--botao-neutro)", border: "1px solid var(--borda)", borderRadius: 9, padding: "6px 10px", color: "var(--texto)", fontSize: 12.5, fontWeight: 700, cursor: "pointer" },
   lixNota: { fontSize: 12.5, lineHeight: 1.5, color: "var(--verde-claro)", background: "rgba(34,197,94,0.1)", border: "1px solid rgba(34,197,94,0.3)", borderRadius: 10, padding: "9px 11px", marginBottom: 12 },
+  lixRecomecar: { display: "flex", alignItems: "center", justifyContent: "center", gap: 7, width: "100%", marginBottom: 14, background: "color-mix(in srgb, var(--vermelho) 10%, transparent)", border: "1px solid color-mix(in srgb, var(--vermelho) 30%, transparent)", borderRadius: 11, padding: "11px", color: "var(--vermelho)", fontSize: 13, fontWeight: 700, cursor: "pointer", textAlign: "center", lineHeight: 1.35 },
   lixEsvaziar: { display: "flex", alignItems: "center", justifyContent: "center", gap: 6, width: "100%", marginTop: 12, background: "transparent", border: "1px dashed var(--borda)", borderRadius: 10, padding: "9px", color: "var(--texto-5)", fontSize: 12.5, fontWeight: 600, cursor: "pointer" },
 
   overlay: { position: "fixed", inset: 0, background: "var(--sombra)", backdropFilter: "blur(4px)", display: "grid", placeItems: "center", padding: 16, zIndex: 50 },

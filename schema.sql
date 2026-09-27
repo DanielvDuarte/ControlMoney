@@ -84,6 +84,7 @@ create table if not exists public.entradas (
   data       date,
   valor      numeric(12,2) not null default 0,
   descricao  text not null default '',
+  fitid      text,                        -- id da transação no OFX (evita importar 2x)
   created_at timestamptz not null default now()
 );
 
@@ -154,16 +155,18 @@ create table if not exists public.metas (
 --  uma coluna nova precisa também de um `add column if not exists` aqui —
 --  é isso que a leva para os bancos criados antes dela.
 -- ============================================================
-alter table public.fixos  add column if not exists valor      numeric(12,2);
-alter table public.gastos add column if not exists observacao text not null default '';
-alter table public.gastos add column if not exists data       date;
-alter table public.gastos add column if not exists fitid      text;
-alter table public.gastos add column if not exists fixo_id    uuid references public.fixos(id) on delete set null;
+alter table public.fixos    add column if not exists valor      numeric(12,2);
+alter table public.entradas add column if not exists fitid      text;
+alter table public.gastos   add column if not exists observacao text not null default '';
+alter table public.gastos   add column if not exists data       date;
+alter table public.gastos   add column if not exists fitid      text;
+alter table public.gastos   add column if not exists fixo_id    uuid references public.fixos(id) on delete set null;
 
 -- ============================================================
 --  ÍNDICES
 -- ============================================================
 create index if not exists entradas_user_mes_idx on public.entradas (user_id, mes);
+create index if not exists entradas_fitid_idx   on public.entradas (user_id, fitid);
 create index if not exists lixeira_user_idx      on public.lixeira  (user_id, removido_em desc);
 create index if not exists metas_user_mes_idx    on public.metas    (user_id, mes);
 create index if not exists gastos_user_mes_idx   on public.gastos   (user_id, mes);

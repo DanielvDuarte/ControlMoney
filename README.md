@@ -33,7 +33,9 @@ No ar em **https://danielvduarte.github.io/ControlMoney/**
   data e categoria do que vai sair (e, num gasto parcelado, separando "só esta
   parcela" de "esta e as próximas"). Logo depois aparece uma tarja de
   **Desfazer**, e o que saiu fica **30 dias na lixeira** — botão da lata no
-  cabeçalho — de onde dá para restaurar tudo de volta ao mês de origem.
+  cabeçalho — de onde dá para restaurar tudo de volta ao mês de origem. Lá
+  também fica o **Recomeçar o mês**, que manda os gastos do mês inteiro para a
+  lixeira de uma vez, para quando o mês foi lançado errado do começo ao fim.
 - Ordenar a lista: **a pagar primeiro** (o padrão — categorias já quitadas
   descem junto com os itens pagos), mais recentes, mais antigos, por nome ou
   por maior valor. A escolha fica salva no aparelho.
@@ -68,7 +70,9 @@ No ar em **https://danielvduarte.github.io/ControlMoney/**
 - Sync em tempo real: alterar num aparelho reflete no outro.
 - **Importar extrato (OFX)**: lê o arquivo do banco no próprio navegador, mostra
   as transações para você marcar categoria e confirmar, e ignora o que já foi
-  importado antes. Nada sobe para o servidor sem a sua confirmação.
+  importado antes. Nada sobe para o servidor sem a sua confirmação. Os créditos
+  do extrato (salário, PIX recebido, estorno) viram **entradas avulsas**, que
+  somam na renda — não gastos.
 - **Analisar no Claude**: monta um resumo do mês (categorias, porcentagens,
   parcelas em aberto, comparativo com os meses anteriores) para você colar no
   Claude e trazer a resposta de volta, guardada naquele mês. Funciona na conta
