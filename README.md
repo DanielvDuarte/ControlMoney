@@ -77,6 +77,13 @@ No ar em **https://danielvduarte.github.io/ControlMoney/**
   importado antes. Nada sobe para o servidor sem a sua confirmação. Os créditos
   do extrato (salário, PIX recebido, estorno) viram **entradas avulsas**, que
   somam na renda — não gastos.
+- **Agente** (em teste, liberado conta por conta): conversa dentro do app sobre
+  os seus gastos, com o mês inteiro na mão — para onde o dinheiro foi, onde dá
+  para cortar, e quanto separar por mês para chegar a um objetivo. A chave da
+  API fica numa Edge Function do Supabase, nunca no navegador; cada conversa só
+  começa depois de um aceite, porque é o único ponto do app em que os seus dados
+  saem daqui. Ele explica tipos de investimento, mas não indica produto. Detalhes
+  e como publicar: [SETUP.md](SETUP.md).
 - **Analisar no Claude**: monta um resumo do mês (categorias, porcentagens,
   parcelas em aberto, comparativo com os meses anteriores) para você colar no
   Claude e trazer a resposta de volta, guardada naquele mês. Funciona na conta

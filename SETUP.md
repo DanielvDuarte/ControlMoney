@@ -584,3 +584,82 @@ lançar as versões novas dessas actions.
 Ponto em aberto: o `node-version: 20` do workflow — esse sim é o Node que
 compila o projeto — está numa versão fora do suporte desde abril de 2026.
 Trocar para 22 é uma linha, e vale fazer junto da próxima alteração.
+
+## Agente de IA (fase 1: medição)
+
+O app é um site estático no GitHub Pages, e isso decide a arquitetura: **não
+existe lugar seguro para a chave da Anthropic no front-end**. O SDK oficial só
+chama a API do navegador com `dangerouslyAllowBrowser: true`, justamente
+porque a chave ficaria visível para qualquer um que abrisse o inspetor — e
+quem paga a conta é o dono do projeto. Por isso a conversa passa por uma
+**Edge Function do Supabase**: [supabase/functions/agente/index.ts](supabase/functions/agente/index.ts).
+
+O retrato financeiro é montado **dentro da função**, não no navegador. Dois
+motivos: o cliente do Supabase já vem preso ao RLS do usuário (ninguém lê o mês
+de outra conta), e o texto sai sempre igual, o que deixa o cache de prompt
+funcionar entre os turnos — do segundo turno em diante a parte repetida custa
+um décimo.
+
+### Publicar a função (sem CLI, sem Node)
+
+1. Painel do Supabase → **Edge Functions** → *Deploy a new function* → **Via Editor**
+2. Nome: `agente`
+3. Cole o conteúdo de `supabase/functions/agente/index.ts` e publique
+4. **Edge Functions → Secrets**: `ANTHROPIC_API_KEY` = a chave do console da Anthropic
+
+A chave é sua e fica só aí. Ela nunca vai para o repositório nem para o bundle.
+
+### Liberar uma conta
+
+O agente é liberado conta por conta, pelo SQL Editor. A tabela `ia_acesso` é
+lida pelo app mas **não é gravável por ele**: se o próprio usuário pudesse se
+liberar, qualquer um gastaria a chave do dono.
+
+```sql
+-- descubra o id da conta
+select id, email from auth.users order by created_at;
+
+-- libere
+insert into public.ia_acesso (user_id, liberado) values ('<id-da-conta>', true)
+on conflict (user_id) do update set liberado = true;
+```
+
+Sem essa linha, o botão nem aparece e o app fica exatamente como era.
+
+### Consentimento
+
+Até o agente existir, este app nunca mandou dado nenhum para fora — e isso é
+uma promessa que o README faz. O agente muda isso, então a primeira conversa
+só começa depois de um aceite explícito, guardado em `ia_perfil.consentiu_em`.
+O resto do app continua sem enviar nada.
+
+### O que está sendo medido
+
+Cada chamada grava uma linha em `ia_uso` com tokens de entrada, saída, escrita
+e leitura de cache, e o custo em dólares calculado pela tabela de preços que
+está no topo da função. É essa tabela que responde "quanto custa uma conversa"
+antes de existir qualquer assinatura.
+
+```sql
+-- custo por conta, por mês
+select user_id, to_char(created_at, 'YYYY-MM') as mes,
+       count(*) as chamadas,
+       sum(entrada + cache_leitura + cache_escrita) as tokens_entrada,
+       sum(saida) as tokens_saida,
+       round(sum(custo_usd), 4) as custo_usd
+from public.ia_uso group by 1, 2 order by 2 desc, 4 desc;
+```
+
+`ia_uso` não tem policy de update nem de delete: número medido não se corrige
+depois.
+
+### Limites conhecidos desta fase
+
+- **Não há cota.** Quem está liberado conversa à vontade. A trava é a lista de
+  liberados ser curta — por isso a fase 2 (cota por interação) vem antes de
+  abrir para qualquer um.
+- **Sem streaming**: a resposta chega inteira, depois de alguns segundos.
+- O agente **explica tipos de investimento, nunca indica produto**. Essa regra
+  está no prompt da função e não é enfeite: recomendar produto específico para
+  uma pessoa específica é consultoria de valores mobiliários, atividade
+  regulada pela CVM.

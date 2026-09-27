@@ -332,6 +332,9 @@ function Painel({ usuario }) {
   const [modalLixeira, setModalLixeira] = useState(false);
   const [modalMetas, setModalMetas] = useState(false);
   const [modalPerfil, setModalPerfil] = useState(false);
+  const [modalAgente, setModalAgente] = useState(false);
+  const [iaLiberado, setIaLiberado] = useState(false);
+  const [iaPerfil, setIaPerfil] = useState(null);
   const [metas, setMetas] = useState({});          // categoria_id -> limite do mês
   const [pergunta, setPergunta] = useState(null);   // confirmação em aberto
   const respostaRef = useRef(null);                 // resolve() da confirmação
@@ -438,7 +441,33 @@ function Painel({ usuario }) {
     }
   }, []);
 
-  useEffect(() => { carregarCategorias(); carregarFixos(); }, [carregarCategorias, carregarFixos]);
+  // O agente é opcional e está em testes: se as tabelas ainda não existem
+  // ou a conta não foi liberada, o app segue exatamente como antes.
+  const carregarAgente = useCallback(async () => {
+    const [acesso, perfil] = await Promise.all([
+      supabase.from("ia_acesso").select("liberado").maybeSingle(),
+      supabase.from("ia_perfil").select("consentiu_em, nivel").maybeSingle(),
+    ]);
+    setIaLiberado(!!acesso.data?.liberado);
+    setIaPerfil(perfil.data || { consentiu_em: null, nivel: "iniciante" });
+  }, []);
+
+  const consentirAgente = async () => {
+    const agora = new Date().toISOString();
+    await supabase.from("ia_perfil").upsert(
+      { user_id: usuario.id, consentiu_em: agora, nivel: iaPerfil?.nivel || "iniciante" },
+      { onConflict: "user_id" });
+    setIaPerfil(p => ({ ...p, consentiu_em: agora }));
+  };
+
+  const definirNivelAgente = async (nivel) => {
+    setIaPerfil(p => ({ ...p, nivel }));
+    await supabase.from("ia_perfil").upsert(
+      { user_id: usuario.id, nivel, consentiu_em: iaPerfil?.consentiu_em || null },
+      { onConflict: "user_id" });
+  };
+
+  useEffect(() => { carregarCategorias(); carregarFixos(); carregarAgente(); }, [carregarCategorias, carregarFixos, carregarAgente]);
   useEffect(() => { carregarMes(mesAtual); }, [mesAtual, carregarMes]);
 
   // Quando a conexão volta, recarrega sozinho — sem exigir toque nenhum.
@@ -1239,6 +1268,14 @@ function Painel({ usuario }) {
           <div style={S.resumoCard}><span style={S.resumoLabel}>Falta pagar</span><span style={{ ...S.resumoVal, color: totais.pendente > 0 ? "var(--ambar)" : "var(--verde-claro)" }}>{brl(totais.pendente)}</span></div>
         </section>
 
+        {iaLiberado && (
+          <button style={S.btnAgente} onClick={() => setModalAgente(true)} disabled={carregando}>
+            <Sparkles size={15} strokeWidth={2.5} />
+            Conversar sobre meus gastos
+            <span style={S.seloTeste}>em teste</span>
+          </button>
+        )}
+
         <button style={S.btnAnalise} onClick={abrirAnalise} disabled={carregando}>
           <Sparkles size={15} strokeWidth={2.5} />
           {analise ? "Ver análise do mês" : "Analisar meus gastos no Claude"}
@@ -1356,6 +1393,9 @@ function Painel({ usuario }) {
         onPreparar={prepararImportacao} onImportar={importarGastos} />}
       {modalFixos && <ModalFixos fixos={fixos} categorias={categorias} onFechar={() => setModalFixos(false)}
         onAlterar={alterarFixo} onValor={definirValorFixo} onRemover={removerFixo} />}
+      {modalAgente && <ModalAgente mes={mesAtual} perfil={iaPerfil}
+        onConsentir={consentirAgente} onNivel={definirNivelAgente}
+        onFechar={() => setModalAgente(false)} />}
       {modalPerfil && <ModalPerfil usuario={usuario} onFechar={() => setModalPerfil(false)} />}
       {modalMetas && <ModalMetas categorias={categorias} metas={metas} mes={mesAtual}
         gastoPorCategoria={gastoPorCategoria} renda={rendaTotal}
@@ -2048,6 +2088,152 @@ function ModalGasto({ categorias, mes, editando, erroExterno, onCriarCategoria, 
       <div style={S.modalAcoes}>
         <button style={S.btnSec} onClick={onFechar}>Cancelar</button>
         <button style={S.btnPri} onClick={submeter}>{editando ? "Salvar" : "Adicionar"}</button>
+      </div>
+    </Overlay>
+  );
+}
+
+// ------------------------------------------------------------
+//  Agente
+//  A conversa roda numa Edge Function: a chave da API nunca chega ao
+//  navegador. Aqui é só a tela — e o aceite, que vem antes da primeira
+//  pergunta, porque até hoje este app não mandava dado nenhum para fora.
+// ------------------------------------------------------------
+const NIVEIS_AGENTE = [
+  { id: "iniciante", rotulo: "Estou começando", ajuda: "explica cada termo, com exemplo em reais" },
+  { id: "intermediario", rotulo: "Sei o básico", ajuda: "usa os termos comuns, mas mostra as contas" },
+  { id: "experiente", rotulo: "Já invisto", ajuda: "direto e técnico, compara risco e tributação" },
+];
+
+const SUGESTOES = [
+  "Para onde meu dinheiro está indo este mês?",
+  "Onde dá para cortar sem apertar demais?",
+  "Quero juntar para uma viagem. Por onde começo?",
+];
+
+function ModalAgente({ mes, perfil, onConsentir, onNivel, onFechar }) {
+  const [mensagens, setMensagens] = useState([]);
+  const [conversaId, setConversaId] = useState(null);
+  const [texto, setTexto] = useState("");
+  const [ocupado, setOcupado] = useState(false);
+  const [erro, setErro] = useState("");
+  const [gasto, setGasto] = useState(0);        // US$ desta conversa (fase de medição)
+  const fim = useRef(null);
+
+  useEffect(() => { fim.current?.scrollIntoView({ behavior: "smooth" }); }, [mensagens, ocupado]);
+
+  const enviar = async (pergunta) => {
+    const msg = (pergunta ?? texto).trim();
+    if (!msg || ocupado) return;
+    setErro(""); setTexto(""); setOcupado(true);
+    setMensagens(ms => [...ms, { papel: "user", texto: msg }]);
+    try {
+      const { data, error } = await supabase.functions.invoke("agente", {
+        body: { mensagem: msg, mes, conversaId },
+      });
+      if (error) {
+        // O corpo do erro vem na resposta HTTP, não na mensagem do erro.
+        let detalhe = error.message;
+        try { detalhe = (await error.context?.json())?.detalhe || detalhe; } catch { /* sem corpo */ }
+        throw new Error(detalhe);
+      }
+      setConversaId(data.conversaId);
+      setMensagens(ms => [...ms, { papel: "assistant", texto: data.resposta, uso: data.uso }]);
+      setGasto(g => g + (data.uso?.custoUsd || 0));
+    } catch (e) {
+      setErro(e?.message || String(e));
+      setMensagens(ms => ms.slice(0, -1));   // devolve a pergunta que não foi
+      setTexto(msg);
+    } finally {
+      setOcupado(false);
+    }
+  };
+
+  // Antes da primeira conversa: o que sai daqui, para onde vai, e o nível.
+  if (!perfil?.consentiu_em) {
+    return (
+      <Overlay onFechar={onFechar}>
+        <h2 style={S.modalTitulo}>Conversar sobre seus gastos</h2>
+        <p style={S.modalAjuda}>Antes de começar, uma coisa importante.</p>
+
+        <div style={S.agenteAviso}>
+          <b>Seus lançamentos vão sair deste aparelho.</b> Para responder, o agente precisa
+          ler o seu mês — valores, categorias, contas fixas e observações — e isso é enviado
+          para a API da Anthropic, que processa e devolve a resposta.
+          <br /><br />
+          O resto do app continua como sempre foi: sem o agente, nada dos seus dados sai daqui.
+          Você pode conversar hoje e nunca mais usar; é a cada conversa que os dados vão.
+        </div>
+
+        <label style={S.label}>Como você quer as explicações sobre dinheiro?</label>
+        <div style={S.agenteNiveis}>
+          {NIVEIS_AGENTE.map(n => (
+            <button key={n.id} style={{ ...S.agenteNivel, ...(perfil?.nivel === n.id ? S.agenteNivelAtivo : null) }}
+              onClick={() => onNivel(n.id)}>
+              <b>{n.rotulo}</b>
+              <span style={S.agenteNivelAjuda}>{n.ajuda}</span>
+            </button>
+          ))}
+        </div>
+
+        <div style={S.modalAcoes}>
+          <button style={S.btnSec} onClick={onFechar}>Agora não</button>
+          <button style={S.btnPri} onClick={onConsentir}>Aceitar e conversar</button>
+        </div>
+      </Overlay>
+    );
+  }
+
+  return (
+    <Overlay onFechar={onFechar}>
+      <h2 style={S.modalTitulo}>Agente</h2>
+      <p style={S.modalAjuda}>
+        Ele já está lendo {MESES[parseKey(mes).m].toLowerCase()}: gastos, contas fixas, metas e os meses anteriores.
+      </p>
+
+      <div style={S.agenteLista}>
+        {mensagens.length === 0 && (
+          <div style={S.agenteVazio}>
+            <p style={{ margin: "0 0 10px", fontSize: 13.5 }}>Pergunte o que quiser. Por exemplo:</p>
+            {SUGESTOES.map(s => (
+              <button key={s} style={S.agenteSugestao} onClick={() => enviar(s)}>{s}</button>
+            ))}
+          </div>
+        )}
+        {mensagens.map((m, i) => (
+          <div key={i} style={m.papel === "user" ? S.agenteBalaoUser : S.agenteBalao}>
+            {m.texto}
+            {m.uso && (
+              <div style={S.agenteCusto}>
+                {m.uso.entrada + m.uso.cacheLeitura + m.uso.cacheEscrita} tokens de entrada · {m.uso.saida} de saída
+                {m.uso.cacheLeitura > 0 && ` · ${m.uso.cacheLeitura} do cache`} · US$ {m.uso.custoUsd.toFixed(4)}
+              </div>
+            )}
+          </div>
+        ))}
+        {ocupado && <div style={S.agenteBalao}><i style={{ color: "var(--texto-4)" }}>pensando…</i></div>}
+        <div ref={fim} />
+      </div>
+
+      {erro && <div style={S.erro}><AlertCircle size={14} /><span>{erro}</span></div>}
+
+      <div style={S.agenteForm}>
+        <input style={{ ...S.input, flex: 1, minWidth: 0 }} value={texto} placeholder="Escreva sua pergunta…"
+          onChange={e => setTexto(e.target.value)} disabled={ocupado}
+          onKeyDown={e => e.key === "Enter" && enviar()} aria-label="Pergunta para o agente" />
+        <button style={{ ...S.btnPri, flex: "0 0 auto", padding: "12px 18px", opacity: texto.trim() && !ocupado ? 1 : 0.5 }}
+          disabled={!texto.trim() || ocupado} onClick={() => enviar()}>Enviar</button>
+      </div>
+
+      {gasto > 0 && (
+        <p style={S.dicaCampo}>
+          Esta conversa custou <b>US$ {gasto.toFixed(4)}</b> até agora. Este número aparece
+          porque o agente está em medição — é ele que vai definir o preço depois.
+        </p>
+      )}
+
+      <div style={S.modalAcoes}>
+        <button style={S.btnSec} onClick={onFechar}>Fechar</button>
       </div>
     </Overlay>
   );
@@ -2790,6 +2976,21 @@ const S = {
   impMeta: { fontSize: 11, color: "var(--texto-4)", marginTop: 2 },
   impValor: { fontSize: 13, fontWeight: 700, fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" },
   impResumo: { fontSize: 13, color: "var(--texto-3)", textAlign: "right", marginTop: 12 },
+
+  btnAgente: { display: "flex", alignItems: "center", justifyContent: "center", gap: 8, width: "100%", marginBottom: 10, background: "linear-gradient(135deg, color-mix(in srgb, var(--verde) 22%, transparent), color-mix(in srgb, var(--azul) 18%, transparent))", border: "1px solid color-mix(in srgb, var(--verde) 40%, transparent)", borderRadius: 12, padding: "12px", color: "var(--texto)", fontSize: 14.5, fontWeight: 700, cursor: "pointer" },
+  seloTeste: { fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.04em", color: "var(--texto-4)", border: "1px solid var(--borda-2)", borderRadius: 99, padding: "1px 7px" },
+  agenteAviso: { fontSize: 13.5, lineHeight: 1.6, color: "var(--texto-2)", background: "color-mix(in srgb, var(--ambar) 10%, transparent)", border: "1px solid color-mix(in srgb, var(--ambar) 30%, transparent)", borderRadius: 12, padding: "13px 14px" },
+  agenteNiveis: { display: "flex", flexDirection: "column", gap: 8 },
+  agenteNivel: { display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 2, width: "100%", textAlign: "left", background: "var(--superficie)", border: "1px solid var(--borda)", borderRadius: 11, padding: "10px 12px", color: "var(--texto)", fontSize: 14, cursor: "pointer" },
+  agenteNivelAtivo: { borderColor: "var(--verde)", background: "rgba(34,197,94,0.12)" },
+  agenteNivelAjuda: { fontSize: 11.5, color: "var(--texto-4)" },
+  agenteLista: { display: "flex", flexDirection: "column", gap: 10, maxHeight: "46vh", overflowY: "auto", margin: "0 -4px", padding: "0 4px 4px" },
+  agenteVazio: { border: "1px dashed var(--borda)", borderRadius: 12, padding: "14px", color: "var(--texto-4)" },
+  agenteSugestao: { display: "block", width: "100%", textAlign: "left", background: "var(--superficie)", border: "1px solid var(--borda)", borderRadius: 10, padding: "9px 11px", marginTop: 6, color: "var(--texto-2)", fontSize: 13, cursor: "pointer" },
+  agenteBalao: { background: "var(--superficie)", border: "1px solid var(--borda)", borderRadius: 12, padding: "11px 13px", fontSize: 14, lineHeight: 1.6, whiteSpace: "pre-wrap", overflowWrap: "anywhere" },
+  agenteBalaoUser: { background: "rgba(34,197,94,0.12)", border: "1px solid rgba(34,197,94,0.35)", borderRadius: 12, padding: "11px 13px", fontSize: 14, lineHeight: 1.6, whiteSpace: "pre-wrap", overflowWrap: "anywhere", marginLeft: 24 },
+  agenteCusto: { fontSize: 10.5, color: "var(--texto-5)", marginTop: 8, paddingTop: 6, borderTop: "1px dashed var(--borda)", fontVariantNumeric: "tabular-nums" },
+  agenteForm: { display: "flex", gap: 8, marginTop: 12 },
 
   btnAnalise: { display: "flex", alignItems: "center", justifyContent: "center", gap: 8, width: "100%", marginBottom: 18, background: "var(--superficie-2)", border: "1px solid var(--borda)", borderRadius: 12, padding: "11px", color: "var(--texto-2)", fontSize: 14, fontWeight: 600, cursor: "pointer" },
   selo: { fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.04em", color: "var(--verde-claro)", background: "rgba(34,197,94,0.14)", border: "1px solid rgba(34,197,94,0.35)", borderRadius: 99, padding: "1px 7px" },

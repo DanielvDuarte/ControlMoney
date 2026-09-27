@@ -307,3 +307,107 @@ drop trigger if exists on_auth_user_created_seed on auth.users;
 create trigger on_auth_user_created_seed
   after insert on auth.users
   for each row execute function public.seed_categorias();
+
+-- ============================================================
+--  AGENTE DE IA (fase 1: medição, sem cobrança)
+--  O app continua inteiro de graça. Isto é só o agente que conversa
+--  dentro dele, liberado conta por conta enquanto medimos o custo real.
+-- ============================================================
+
+-- Quem pode usar o agente. Fica numa tabela à parte de propósito: o
+-- usuário lê, mas não escreve — senão qualquer um se liberaria sozinho,
+-- e quem paga a conta da API é o dono do projeto. Para liberar alguém:
+--   insert into public.ia_acesso (user_id, liberado) values ('<id>', true)
+--   on conflict (user_id) do update set liberado = true;
+create table if not exists public.ia_acesso (
+  user_id    uuid primary key references auth.users(id) on delete cascade,
+  liberado   boolean not null default false,
+  created_at timestamptz not null default now()
+);
+
+-- Preferências e consentimento. Até hoje o app nunca mandou dado nenhum
+-- para fora; o agente muda isso, então a conversa só começa depois de um
+-- aceite explícito, com data registrada.
+create table if not exists public.ia_perfil (
+  user_id      uuid primary key default auth.uid() references auth.users(id) on delete cascade,
+  consentiu_em timestamptz,
+  nivel        text not null default 'iniciante',  -- iniciante | intermediario | experiente
+  created_at   timestamptz not null default now()
+);
+
+create table if not exists public.ia_conversas (
+  id            uuid primary key default gen_random_uuid(),
+  user_id       uuid not null default auth.uid() references auth.users(id) on delete cascade,
+  titulo        text not null default '',
+  mes           text,                        -- mês que estava aberto quando começou
+  created_at    timestamptz not null default now(),
+  atualizada_em timestamptz not null default now()
+);
+
+create table if not exists public.ia_mensagens (
+  id          uuid primary key default gen_random_uuid(),
+  user_id     uuid not null default auth.uid() references auth.users(id) on delete cascade,
+  conversa_id uuid not null references public.ia_conversas(id) on delete cascade,
+  papel       text not null,                 -- 'user' | 'assistant'
+  texto       text not null,
+  created_at  timestamptz not null default now()
+);
+
+-- O medidor. É esta tabela que responde "quanto custa de verdade" e
+-- decide o preço da fase 2. Sem update nem delete: número medido não
+-- se corrige depois.
+create table if not exists public.ia_uso (
+  id            uuid primary key default gen_random_uuid(),
+  user_id       uuid not null default auth.uid() references auth.users(id) on delete cascade,
+  conversa_id   uuid references public.ia_conversas(id) on delete set null,
+  modelo        text not null,
+  entrada       int not null default 0,      -- tokens cobrados como entrada nova
+  saida         int not null default 0,
+  cache_escrita int not null default 0,
+  cache_leitura int not null default 0,
+  custo_usd     numeric(12,6) not null default 0,
+  created_at    timestamptz not null default now()
+);
+
+create index if not exists ia_conversas_user_idx on public.ia_conversas (user_id, atualizada_em desc);
+create index if not exists ia_mensagens_conv_idx on public.ia_mensagens (conversa_id, created_at);
+create index if not exists ia_uso_user_idx       on public.ia_uso       (user_id, created_at desc);
+
+alter table public.ia_acesso    enable row level security;
+alter table public.ia_perfil    enable row level security;
+alter table public.ia_conversas enable row level security;
+alter table public.ia_mensagens enable row level security;
+alter table public.ia_uso       enable row level security;
+
+-- ia_acesso: só leitura. Liberar é ato do dono do projeto, pelo SQL Editor.
+drop policy if exists "iaac_select" on public.ia_acesso;
+create policy "iaac_select" on public.ia_acesso for select using (auth.uid() = user_id);
+
+drop policy if exists "iap_select" on public.ia_perfil;
+drop policy if exists "iap_insert" on public.ia_perfil;
+drop policy if exists "iap_update" on public.ia_perfil;
+create policy "iap_select" on public.ia_perfil for select using (auth.uid() = user_id);
+create policy "iap_insert" on public.ia_perfil for insert with check (auth.uid() = user_id);
+create policy "iap_update" on public.ia_perfil for update using (auth.uid() = user_id) with check (auth.uid() = user_id);
+
+drop policy if exists "iac_select" on public.ia_conversas;
+drop policy if exists "iac_insert" on public.ia_conversas;
+drop policy if exists "iac_update" on public.ia_conversas;
+drop policy if exists "iac_delete" on public.ia_conversas;
+create policy "iac_select" on public.ia_conversas for select using (auth.uid() = user_id);
+create policy "iac_insert" on public.ia_conversas for insert with check (auth.uid() = user_id);
+create policy "iac_update" on public.ia_conversas for update using (auth.uid() = user_id) with check (auth.uid() = user_id);
+create policy "iac_delete" on public.ia_conversas for delete using (auth.uid() = user_id);
+
+drop policy if exists "iam_select" on public.ia_mensagens;
+drop policy if exists "iam_insert" on public.ia_mensagens;
+drop policy if exists "iam_delete" on public.ia_mensagens;
+create policy "iam_select" on public.ia_mensagens for select using (auth.uid() = user_id);
+create policy "iam_insert" on public.ia_mensagens for insert with check (auth.uid() = user_id);
+create policy "iam_delete" on public.ia_mensagens for delete using (auth.uid() = user_id);
+
+-- Sem update e sem delete: a medição é o produto desta fase.
+drop policy if exists "iau_select" on public.ia_uso;
+drop policy if exists "iau_insert" on public.ia_uso;
+create policy "iau_select" on public.ia_uso for select using (auth.uid() = user_id);
+create policy "iau_insert" on public.ia_uso for insert with check (auth.uid() = user_id);
