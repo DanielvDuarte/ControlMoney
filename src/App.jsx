@@ -448,7 +448,10 @@ function Painel({ usuario }) {
       supabase.from("ia_acesso").select("liberado").maybeSingle(),
       supabase.from("ia_perfil").select("consentiu_em, nivel").maybeSingle(),
     ]);
-    setIaLiberado(!!acesso.data?.liberado);
+    // Aberto para todos: só some para quem foi bloqueado de propósito. Se as
+    // tabelas ainda não existem no banco, a consulta dá erro e o botão não
+    // aparece — é o certo, porque sem elas o agente não teria como responder.
+    setIaLiberado(!acesso.error && acesso.data?.liberado !== false);
     setIaPerfil(perfil.data || { consentiu_em: null, nivel: "iniciante" });
   }, []);
 
@@ -1250,7 +1253,7 @@ function Painel({ usuario }) {
         <>
         <section style={{ ...S.heroSaldo, borderColor: saldoNeg ? "var(--vermelho-borda)" : "var(--verde-borda)" }}>
           <div style={S.heroTopo}>
-            <span style={S.heroLabel}>{saldoNeg ? "Faltam" : "Sobra depois de tudo"}</span>
+            <span style={S.heroLabel}>{saldoNeg ? "Faltam" : "Valor não comprometido"}</span>
             <button style={S.rendaBtn} onClick={() => setEditRenda(true)}>
               Renda: {brl(rendaTotal)}{entradas.length > 0 && <TrendingUp size={11} />} <Pencil size={12} />
             </button>
@@ -1263,7 +1266,7 @@ function Painel({ usuario }) {
         </section>
 
         <section style={S.resumo}>
-          <div style={S.resumoCard}><span style={S.resumoLabel}>Total do mês</span><span style={S.resumoVal}>{brl(totais.total)}</span></div>
+          <div style={S.resumoCard}><span style={S.resumoLabel}>Gastos no mês</span><span style={S.resumoVal}>{brl(totais.total)}</span></div>
           <div style={S.resumoCard}><span style={S.resumoLabel}>Já pago</span><span style={{ ...S.resumoVal, color: "var(--verde-claro)" }}>{brl(totais.pago)}</span></div>
           <div style={S.resumoCard}><span style={S.resumoLabel}>Falta pagar</span><span style={{ ...S.resumoVal, color: totais.pendente > 0 ? "var(--ambar)" : "var(--verde-claro)" }}>{brl(totais.pendente)}</span></div>
         </section>
@@ -1498,7 +1501,7 @@ function ModalEntradas({ renda, entradas, mes, onFechar, onSalvarRenda, onAdicio
       {erro && <div style={S.erro}><AlertCircle size={14} /> {erro}</div>}
 
       <div style={S.entradaTotal}>
-        Total do mês <b style={{ color: "var(--verde-claro)" }}>{brl(total)}</b>
+        Gastos no mês <b style={{ color: "var(--verde-claro)" }}>{brl(total)}</b>
       </div>
 
       <div style={S.modalAcoes}>
@@ -1970,7 +1973,7 @@ function ModalGasto({ categorias, mes, editando, erroExterno, onCriarCategoria, 
       <h2 style={S.modalTitulo}>{editando ? "Editar gasto" : "Novo gasto"}</h2>
 
       <label style={S.label}>Nome</label>
-      <input autoFocus style={S.input} value={nome} onChange={e => setNome(e.target.value)} placeholder="Ex: Aluguel, Internet, Switch…" />
+      <input autoFocus style={S.input} value={nome} onChange={e => setNome(e.target.value)} placeholder="Ex: Água, Luz, Internet…" />
 
       <label style={S.label}>
         Valor {parcelas > 1 ? (modo === "dividir" ? "(total da compra)" : "(de cada mês)") : ""}
@@ -2883,10 +2886,10 @@ const S = {
   barraFill: { height: "100%", background: "linear-gradient(90deg,var(--verde),var(--verde-claro))", borderRadius: 99, transition: "width .3s ease" },
   barraTxt: { fontSize: 11.5, color: "var(--texto-4)" },
 
-  resumo: { display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 10, marginBottom: 22 },
+  resumo: { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 10, marginBottom: 22 },
   resumoCard: { background: "var(--modal)", border: "1px solid var(--campo-borda)", borderRadius: 12, padding: "12px 14px", display: "flex", flexDirection: "column", gap: 3 },
   resumoLabel: { fontSize: 11.5, color: "var(--texto-4)" },
-  resumoVal: { fontSize: 16, fontWeight: 700, fontVariantNumeric: "tabular-nums" },
+  resumoVal: { fontSize: "clamp(14px, 4.2vw, 16px)", fontWeight: 700, fontVariantNumeric: "tabular-nums" },
 
   barraOrdem: { display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 7, marginBottom: 10 },
   barraOrdemRotulo: { fontSize: 12, color: "var(--texto-5)" },

@@ -222,10 +222,13 @@ export default {
     if (!mes) return json({ erro: "mês inválido" }, 400);
     if (mensagem.length > 4000) return json({ erro: "mensagem longa demais" }, 400);
 
-    // Porta 1: esta conta está liberada?
+    // Porta 1: o agente está aberto para todo mundo enquanto o grupo é pequeno.
+    // `ia_acesso` virou lista de bloqueio: só barra quem tiver uma linha com
+    // liberado = false. Quem não tem linha, passa. O consumo de cada um fica
+    // registrado em `ia_uso`, que é como se vê quem gastou o quê.
     const { data: acesso } = await supabase.from("ia_acesso").select("liberado").maybeSingle();
-    if (!acesso?.liberado) {
-      return json({ erro: "acesso_negado", detalhe: "O agente ainda está em testes e esta conta não foi liberada." }, 403);
+    if (acesso && acesso.liberado === false) {
+      return json({ erro: "acesso_negado", detalhe: "O agente está indisponível para esta conta." }, 403);
     }
 
     // Porta 2: a pessoa aceitou mandar os dados para fora?
@@ -260,7 +263,15 @@ export default {
       { role: "user" as const, content: mensagem },
     ];
 
-    const anthropic = new Anthropic({ apiKey: chave });
+    // Chave criada no nível da organização não diz sozinha em qual workspace
+    // a chamada é cobrada, e a API recusa com "not scoped to a workspace".
+    // Duas saídas: criar a chave dentro de um workspace, ou informar o id
+    // aqui. O segredo é opcional — quem já tem chave de workspace não precisa.
+    const workspace = Deno.env.get("ANTHROPIC_WORKSPACE_ID");
+    const anthropic = new Anthropic({
+      apiKey: chave,
+      ...(workspace ? { defaultHeaders: { "anthropic-workspace-id": workspace } } : {}),
+    });
 
     let resposta: any;
     try {
@@ -282,11 +293,17 @@ export default {
       });
     } catch (e: any) {
       const status = e?.status ?? 500;
+      const bruto = e?.message || "erro desconhecido";
       const detalhe = status === 429
         ? "A API está com limite de uso atingido. Tente de novo em alguns instantes."
         : status === 401
           ? "A chave da API foi recusada. Confira o segredo ANTHROPIC_API_KEY."
-          : (e?.message || "erro desconhecido");
+          : /not scoped to a workspace/i.test(bruto)
+            ? "A chave é da organização, não de um workspace. Crie uma chave dentro de um workspace, " +
+              "ou adicione o segredo ANTHROPIC_WORKSPACE_ID com o id do workspace."
+            : /credit|balance|billing/i.test(bruto)
+              ? "A conta da Anthropic está sem créditos. Adicione saldo em platform.claude.com → Billing."
+              : bruto;
       return json({ erro: "falha_na_api", detalhe }, status >= 400 && status < 600 ? status : 500);
     }
 

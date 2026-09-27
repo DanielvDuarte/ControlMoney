@@ -609,22 +609,55 @@ um décimo.
 
 A chave é sua e fica só aí. Ela nunca vai para o repositório nem para o bundle.
 
-### Liberar uma conta
+### Quem pode usar
 
-O agente é liberado conta por conta, pelo SQL Editor. A tabela `ia_acesso` é
-lida pelo app mas **não é gravável por ele**: se o próprio usuário pudesse se
-liberar, qualquer um gastaria a chave do dono.
+O agente está **aberto para todas as contas**. `ia_acesso` é lista de
+**bloqueio**, não de liberação: quem não tem linha lá, usa. Para barrar
+alguém — gasto fora da curva, uso indevido — sem mexer no código:
 
 ```sql
--- descubra o id da conta
-select id, email from auth.users order by created_at;
-
--- libere
-insert into public.ia_acesso (user_id, liberado) values ('<id-da-conta>', true)
-on conflict (user_id) do update set liberado = true;
+insert into public.ia_acesso (user_id, liberado)
+select id, false from auth.users where email = 'quem@exemplo.com'
+on conflict (user_id) do update set liberado = false;
 ```
 
-Sem essa linha, o botão nem aparece e o app fica exatamente como era.
+Para liberar de novo, troque `false` por `true` (ou apague a linha). A tabela é
+lida pelo app mas não é gravável por ele: senão quem fosse bloqueado se
+liberaria sozinho, e quem paga a conta da API é o dono do projeto.
+
+Estar aberto assim só é sustentável enquanto o grupo é pequeno e conhecido —
+não há cota nenhuma. É exatamente o que a fase 2 resolve.
+
+### Quanto cada pessoa gastou
+
+```sql
+select u.email,
+       count(*)                                         as perguntas,
+       sum(i.entrada + i.cache_leitura + i.cache_escrita) as tokens_entrada,
+       sum(i.saida)                                     as tokens_saida,
+       round(sum(i.custo_usd), 4)                       as custo_usd,
+       round(sum(i.custo_usd) * 5.40, 2)                as custo_brl_aprox,
+       max(i.created_at)                                as ultima_pergunta
+from public.ia_uso i
+join auth.users u on u.id = i.user_id
+group by u.email
+order by custo_usd desc;
+```
+
+Mês a mês, para ver a tendência:
+
+```sql
+select to_char(i.created_at, 'YYYY-MM') as mes, u.email,
+       count(*) as perguntas, round(sum(i.custo_usd), 4) as custo_usd
+from public.ia_uso i
+join auth.users u on u.id = i.user_id
+group by 1, 2
+order by 1 desc, 4 desc;
+```
+
+Rode no SQL Editor, que enxerga todas as contas. Pelo app, cada um só vê o
+próprio consumo — o RLS de `ia_uso` cuida disso. O câmbio de 5,40 é chute:
+ajuste para o dólar do dia quando for precificar.
 
 ### Consentimento
 

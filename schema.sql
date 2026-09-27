@@ -314,11 +314,14 @@ create trigger on_auth_user_created_seed
 --  dentro dele, liberado conta por conta enquanto medimos o custo real.
 -- ============================================================
 
--- Quem pode usar o agente. Fica numa tabela à parte de propósito: o
--- usuário lê, mas não escreve — senão qualquer um se liberaria sozinho,
--- e quem paga a conta da API é o dono do projeto. Para liberar alguém:
---   insert into public.ia_acesso (user_id, liberado) values ('<id>', true)
---   on conflict (user_id) do update set liberado = true;
+-- Lista de BLOQUEIO do agente. Enquanto o grupo é pequeno, o agente está
+-- aberto para todas as contas: quem não tem linha aqui, usa. A tabela
+-- existe para o caso contrário — barrar alguém sem mexer no código:
+--   insert into public.ia_acesso (user_id, liberado)
+--   select id, false from auth.users where email = 'quem@exemplo.com'
+--   on conflict (user_id) do update set liberado = false;
+-- O usuário lê mas não escreve: senão quem fosse bloqueado se liberaria
+-- sozinho, e quem paga a conta da API é o dono do projeto.
 create table if not exists public.ia_acesso (
   user_id    uuid primary key references auth.users(id) on delete cascade,
   liberado   boolean not null default false,
