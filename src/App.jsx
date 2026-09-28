@@ -24,7 +24,6 @@ const diaEm = (mesKey, dia) => `${mesKey}-${String(Math.min(dia, ultimoDia(mesKe
 const diaDe = (data) => Number(String(data).slice(8, 10)) || 1;
 const ddmm = (data) => `${String(data).slice(8, 10)}/${String(data).slice(5, 7)}`;
 const soma = (lista) => lista.reduce((s, g) => s + Number(g.valor || 0), 0);
-const soma2 = (lista) => lista.reduce((s, g) => s + Number(g.subtotal || 0), 0);
 // Pela data do gasto; no mesmo dia, pela ordem em que foi lançado. Sem data
 // vai para o fim nos dois sentidos — não é nem o mais antigo nem o mais novo.
 const quando = (g) => `${g.data}|${g.created_at || ""}`;
@@ -2706,21 +2705,29 @@ function LinhaMeta({ cat, valor, gasto, mudou, onMexer }) {
 //  ela continua servindo como bolinha de identidade, não como dado.
 // ============================================================
 
-// A rosca mostra o desenho do mês: o tamanho de cada categoria de relance.
-// Sete fatias no máximo; o resto soma em "Outras". Acima disso as fatias ficam
-// finas demais para serem lidas, e nenhuma paleta separa tantas cores.
-const MAX_FATIAS = 6;
+// A rosca mostra o desenho do mês: todas as categorias, da maior para a menor.
+// A paleta validada tem sete matizes. Passando disso, elas voltam num segundo
+// tom em vez de virarem cores novas — matiz × tom dá catorze preenchimentos
+// distintos, e nenhuma cor inventada, que é o que quebraria a separação sob
+// daltonismo. Quem carrega a identidade é a legenda, em texto.
+//
+// A mistura vai sempre para o lado OPOSTO da superfície (clareia no tema
+// escuro, escurece no claro). Misturar com a própria superfície, que foi a
+// primeira tentativa, derrubava o contraste das fatias para 1,5–2,4:1 —
+// abaixo do piso de 3:1, e elas desapareciam no fundo do cartão. Assim o pior
+// caso fica em 7,4:1 no escuro e 6,2:1 no claro.
+const MATIZES = 7;
+const corDaVaga = (i) => {
+  const matiz = `var(--cat-${(i % MATIZES) + 1})`;
+  const volta = Math.floor(i / MATIZES);
+  return volta === 0 ? matiz : `color-mix(in srgb, ${matiz} 55%, var(--cat-alvo))`;
+};
 
 function RoscaCategorias({ grupos, total, mes, categorias }) {
   const { y, m } = parseKey(mes);
   if (!total) return null;
 
-  const ordenados = [...grupos].sort((a, b) => b.subtotal - a.subtotal);
-  const principais = ordenados.slice(0, MAX_FATIAS);
-  const resto = ordenados.slice(MAX_FATIAS);
-  const fatias = resto.length
-    ? [...principais, { nome: `Outras ${resto.length}`, subtotal: soma2(resto), sobra: true }]
-    : principais;
+  const fatias = [...grupos].sort((a, b) => b.subtotal - a.subtotal);
 
   // A cor segue a categoria, não o tamanho dela: as visíveis são ordenadas
   // pela ordem de criação e recebem as vagas nessa sequência. Assim o mesmo
@@ -2728,10 +2735,10 @@ function RoscaCategorias({ grupos, total, mes, categorias }) {
   // repinta tudo só porque uma passou a outra.
   const ordemCriacao = new Map(categorias.map((c, i) => [c.nome, i]));
   const vagas = new Map(
-    [...principais].sort((a, b) => (ordemCriacao.get(a.nome) ?? 99) - (ordemCriacao.get(b.nome) ?? 99))
-      .map((g, i) => [g.nome, `var(--cat-${(i % 7) + 1})`])
+    [...fatias].sort((a, b) => (ordemCriacao.get(a.nome) ?? 999) - (ordemCriacao.get(b.nome) ?? 999))
+      .map((g, i) => [g.nome, corDaVaga(i)])
   );
-  const corDe = (f) => (f.sobra ? "var(--borda-3)" : vagas.get(f.nome));
+  const corDe = (f) => vagas.get(f.nome);
 
   const R = 54, GROSSURA = 19, VOLTA = 2 * Math.PI * R;
   let acumulado = 0;

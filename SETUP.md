@@ -564,9 +564,8 @@ olhando, não dado do mês.
 ## Gráficos
 
 Uma rosca com as categorias do mês aberto, ligada e desligada no botão
-**Gráfico** (a escolha fica no aparelho, como a ordenação). Seis fatias no
-máximo; o resto soma em "Outras", porque abaixo disso as fatias ficam finas
-demais para serem lidas.
+**Gráfico** (a escolha fica no aparelho, como a ordenação). Todas as
+categorias aparecem — não há agrupamento em "Outras".
 
 **A paleta das fatias não é a das categorias.** `CORES_CAT` foi medida com o
 validador e reprova como área preenchida: as dez cores ficam acima da faixa de
@@ -578,9 +577,19 @@ identidade, não dado.
 As fatias usam `--cat-1` a `--cat-7`, uma ordem fixa e validada contra as
 superfícies deste app: pior par adjacente ΔE 9,1 no claro e 8,4 no escuro
 (alvo 8), visão normal 19,6 e 19,3 (piso 15). **A ordem é o mecanismo de
-segurança, não enfeite** — não reordene nem invente uma oitava cor. Três tons
-do tema claro ficam abaixo de 3:1 contra o branco; a compensação prevista é a
-legenda com nome e valor em texto, que é o que existe aqui.
+segurança, não enfeite** — não reordene.
+
+**Da oitava categoria em diante**, as mesmas matizes voltam num segundo tom,
+misturadas com `--cat-alvo`. Matiz × tom dá catorze preenchimentos sem
+inventar cor nova, que é justamente o que quebraria a separação sob
+daltonismo. `--cat-alvo` é o lado **oposto** da superfície — branco no tema
+escuro, preto no claro. A primeira tentativa misturava com a própria
+superfície e derrubou o contraste das fatias para 1,5–2,4:1, abaixo do piso de
+3:1: elas sumiam no fundo do cartão. Com a mistura invertida o pior caso fica
+em 7,4:1 no escuro e 6,2:1 no claro.
+
+Três tons do tema claro ficam abaixo de 3:1 contra o branco; a compensação
+prevista é a legenda com nome e valor em texto, que é o que existe aqui.
 
 **A cor segue a categoria, não o tamanho dela.** As fatias visíveis são
 ordenadas por ordem de criação da categoria e recebem as vagas nessa

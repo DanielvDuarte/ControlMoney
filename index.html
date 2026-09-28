@@ -41,6 +41,9 @@
            de seguranca, nao enfeite. */
         --cat-1: #3987e5; --cat-2: #d95926; --cat-3: #199e70; --cat-4: #c98500;
         --cat-5: #d55181; --cat-6: #008300; --cat-7: #9085e9;
+        /* Alvo da mistura da 2a volta de cores: sempre o lado OPOSTO da
+           superficie, senao a fatia se aproxima do fundo e some. */
+        --cat-alvo: #ffffff;
         --sombra: rgba(4,7,12,0.7);
       }
       :root[data-tema="claro"] {
@@ -61,6 +64,7 @@
         --grafico: #0284c7;
         --cat-1: #2a78d6; --cat-2: #eb6834; --cat-3: #1baf7a; --cat-4: #eda100;
         --cat-5: #e87ba4; --cat-6: #008300; --cat-7: #4a3aa7;
+        --cat-alvo: #000000;
         --sombra: rgba(15,23,42,0.45);
       }
       * { margin: 0; padding: 0; box-sizing: border-box; }
