@@ -59,6 +59,8 @@ No ar em **https://danielvduarte.github.io/ControlMoney/**
 - Renda por mês, com o saldo (sobra) calculado em cima dela — e **entradas
   avulsas** (freela, reembolso, venda) somadas à renda fixa, cada uma com
   valor, data e de onde veio.
+- **Gráficos**: barras por categoria (quanto e que fatia do mês) e os últimos
+  seis meses lado a lado, com o mês aberto em destaque.
 - **Exportar em PDF**: botão que abre a impressão do navegador com uma folha
   limpa do mês, pronta para salvar em PDF ou imprimir.
 - Quanto cada categoria consumiu da renda, em porcentagem (aparece quando há

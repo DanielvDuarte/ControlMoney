@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
-import { Plus, Check, Trash2, ChevronLeft, ChevronRight, X, Pencil, AlertCircle, LogOut, Tags, Sparkles, Copy, ExternalLink, Upload, Download, Share, Sun, Moon, CloudOff, RefreshCw, Repeat, Pause, Play, Printer, TrendingUp, Undo2, RotateCcw, Target } from "lucide-react";
+import { Plus, Check, Trash2, ChevronLeft, ChevronRight, X, Pencil, AlertCircle, LogOut, Tags, Sparkles, Copy, ExternalLink, Upload, Download, Share, Sun, Moon, CloudOff, RefreshCw, Repeat, Pause, Play, PieChart, Printer, TrendingUp, Undo2, RotateCcw, Target } from "lucide-react";
 import { supabase } from "./lib/supabase";
 
 // ---------- helpers ----------
@@ -24,6 +24,7 @@ const diaEm = (mesKey, dia) => `${mesKey}-${String(Math.min(dia, ultimoDia(mesKe
 const diaDe = (data) => Number(String(data).slice(8, 10)) || 1;
 const ddmm = (data) => `${String(data).slice(8, 10)}/${String(data).slice(5, 7)}`;
 const soma = (lista) => lista.reduce((s, g) => s + Number(g.valor || 0), 0);
+const soma2 = (lista) => lista.reduce((s, g) => s + Number(g.subtotal || 0), 0);
 // Pela data do gasto; no mesmo dia, pela ordem em que foi lançado. Sem data
 // vai para o fim nos dois sentidos — não é nem o mais antigo nem o mais novo.
 const quando = (g) => `${g.data}|${g.created_at || ""}`;
@@ -345,6 +346,8 @@ function Painel({ usuario }) {
   const [modalFixos, setModalFixos] = useState(false);
   const [modalLixeira, setModalLixeira] = useState(false);
   const [modalMetas, setModalMetas] = useState(false);
+  const [modalGraficos, setModalGraficos] = useState(false);
+  const [serieMeses, setSerieMeses] = useState([]);
   const [modalPerfil, setModalPerfil] = useState(false);
   const [modalAgente, setModalAgente] = useState(false);
   const [iaLiberado, setIaLiberado] = useState(false);
@@ -1320,6 +1323,21 @@ function Painel({ usuario }) {
     carregarMes(mesAtual);
   };
 
+  // Seis meses de totais para o gráfico de colunas. Uma consulta só, somando
+  // no cliente — é bem menos dado do que a lista de um mês.
+  const abrirGraficos = async () => {
+    const inicio = addMeses(mesAtual, -5);
+    const { data } = await supabase.from("gastos")
+      .select("mes, valor").gte("mes", inicio).lte("mes", mesAtual);
+    const totais = {};
+    (data || []).forEach(g => { totais[g.mes] = (totais[g.mes] || 0) + Number(g.valor || 0); });
+    setSerieMeses(Array.from({ length: 6 }, (_, i) => {
+      const mes = addMeses(inicio, i);
+      return { mes, total: totais[mes] || 0 };
+    }));
+    setModalGraficos(true);
+  };
+
   const abrirNovo = () => { setErroGlobal(""); setEditando(null); setModalGasto(true); };
   const abrirEdicao = (g) => { setErroGlobal(""); setEditando({ ...g, categoriaNome: catPorId[g.categoria_id]?.nome }); setModalGasto(true); };
   const fechar = () => { setModalGasto(false); setEditando(null); };
@@ -1439,6 +1457,9 @@ function Painel({ usuario }) {
         <div style={S.linhaSecundaria}>
           <button style={S.btnSecundario} onClick={() => setModalFixos(true)}>
             <Repeat size={14} /> Contas fixas{fixos.length ? ` (${fixos.length})` : ""}
+          </button>
+          <button style={S.btnSecundario} onClick={abrirGraficos}>
+            <PieChart size={14} /> Gráficos
           </button>
           <button style={S.btnSecundario} onClick={() => setModalMetas(true)}>
             <Target size={14} /> Metas{Object.keys(metas).length ? ` (${Object.keys(metas).length})` : ""}
@@ -1567,6 +1588,8 @@ function Painel({ usuario }) {
         onConsentir={consentirAgente} onNivel={definirNivelAgente}
         onFechar={() => setModalAgente(false)} />}
       {modalPerfil && <ModalPerfil usuario={usuario} onFechar={() => setModalPerfil(false)} />}
+      {modalGraficos && <ModalGraficos mes={mesAtual} grupos={porCategoria} total={totais.total}
+        serie={serieMeses} onFechar={() => setModalGraficos(false)} />}
       {modalMetas && <ModalMetas categorias={categorias} metas={metas} mes={mesAtual} onSalvar={salvarMetas}
         gastoPorCategoria={gastoPorCategoria} renda={rendaTotal}
         onFechar={() => setModalMetas(false)} />}
@@ -2531,6 +2554,101 @@ function LinhaMeta({ cat, valor, gasto, mudou, onMexer }) {
     </div>
   );
 }
+// ============================================================
+//  Gráficos
+//  Barras de uma cor só, em HTML: o comprimento carrega a magnitude e o nome
+//  vai escrito ao lado, então a cor não precisa distinguir nada. A paleta de
+//  categorias reprova nos testes de daltonismo quando vira área preenchida —
+//  ela continua servindo como bolinha de identidade, não como dado.
+// ============================================================
+const MAX_BARRAS = 8;
+
+function BarrasCategoria({ grupos, total }) {
+  if (!total) return <div style={S.catVazio}>Nenhum gasto neste mês para desenhar.</div>;
+
+  // Cauda dobrada em "Outras": além de ~8 faixas a leitura vira lista, não gráfico.
+  const ordenados = [...grupos].sort((a, b) => b.subtotal - a.subtotal);
+  const principais = ordenados.slice(0, MAX_BARRAS);
+  const resto = ordenados.slice(MAX_BARRAS);
+  const linhas = resto.length
+    ? [...principais, { nome: `Outras ${resto.length}`, subtotal: soma2(resto) }]
+    : principais;
+  const maior = linhas[0]?.subtotal || 1;
+
+  return (
+    <div style={S.grafLista}>
+      {linhas.map(l => (
+        <div key={l.nome} style={S.grafLinha}>
+          <div style={S.grafTopo}>
+            <span style={S.grafNome}>{l.nome}</span>
+            <span style={S.grafValor}>{brl(l.subtotal)}</span>
+          </div>
+          <div style={S.grafTrilho}>
+            <div style={{ ...S.grafBarra, width: `${Math.max(1.5, (l.subtotal / maior) * 100)}%` }}
+              title={`${l.nome}: ${brl(l.subtotal)} · ${pctTxt((l.subtotal / total) * 100)} do mês`} />
+          </div>
+          <div style={S.grafPct}>{pctTxt((l.subtotal / total) * 100)} do mês</div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function ColunasMes({ serie, mesAtual }) {
+  const maior = Math.max(...serie.map(s => s.total), 1);
+  const compacto = (v) => v >= 1000
+    ? `${(v / 1000).toLocaleString("pt-BR", { maximumFractionDigits: 1 })} mil`
+    : Math.round(v).toString();
+
+  return (
+    <div style={S.colunasWrap}>
+      {serie.map(s => {
+        const p = parseKey(s.mes);
+        const atual = s.mes === mesAtual;
+        return (
+          <div key={s.mes} style={S.colunaCol} title={`${MESES[p.m]}/${p.y}: ${brl(s.total)}`}>
+            <div style={S.colunaValor}>{s.total ? compacto(s.total) : ""}</div>
+            <div style={S.colunaTrilho}>
+              <div style={{
+                ...S.colunaBarra,
+                height: `${Math.max(2, (s.total / maior) * 100)}%`,
+                // Emphasis: o mês aberto em destaque, os outros como contexto.
+                background: atual ? "var(--grafico)" : "var(--borda-3)",
+              }} />
+            </div>
+            <div style={{ ...S.colunaRotulo, color: atual ? "var(--texto-2)" : "var(--texto-5)" }}>
+              {MESES[p.m].slice(0, 3)}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function ModalGraficos({ mes, grupos, total, serie, onFechar }) {
+  const { y, m } = parseKey(mes);
+  return (
+    <Overlay onFechar={onFechar}>
+      <h2 style={S.modalTitulo}>Para onde foi o dinheiro</h2>
+      <p style={S.modalAjuda}>{MESES[m]} de {y} — {brl(total)} no total.</p>
+
+      <BarrasCategoria grupos={grupos} total={total} />
+
+      <div style={S.passo}><span style={S.passoNum}>6</span> meses de gastos</div>
+      <ColunasMes serie={serie} mesAtual={mes} />
+      <p style={S.dicaCampo}>
+        O mês aberto aparece em destaque; os outros ficam em cinza como contexto.
+        Os números estão todos na lista do mês — o gráfico só mostra o tamanho relativo.
+      </p>
+
+      <div style={S.modalAcoes}>
+        <button style={S.btnSec} onClick={onFechar}>Fechar</button>
+      </div>
+    </Overlay>
+  );
+}
+
 function ModalMetas({ categorias, metas, gastoPorCategoria, mes, renda, onSalvar, onFechar }) {
   const { y, m } = parseKey(mes);
   const [rascunho, setRascunho] = useState({});
@@ -3169,6 +3287,23 @@ const S = {
   fixoDiaRotulo: { fontSize: 11.5, color: "var(--texto-5)" },
   fixoCartao: { border: "1px solid var(--borda)", background: "var(--superficie)", borderRadius: 11, padding: "10px 8px 10px 12px" },
   fixoTopo: { display: "flex", alignItems: "center", gap: 9 },
+  grafLista: { display: "flex", flexDirection: "column", gap: 13 },
+  grafLinha: { display: "flex", flexDirection: "column", gap: 4 },
+  grafTopo: { display: "flex", alignItems: "baseline", gap: 8 },
+  grafNome: { flex: 1, minWidth: 0, fontSize: 13.5, fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" },
+  grafValor: { fontSize: 13, fontWeight: 700, fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" },
+  // Trilho recessivo; a barra é a única coisa saturada da linha.
+  grafTrilho: { height: 10, borderRadius: 5, background: "var(--superficie-2)", overflow: "hidden" },
+  grafBarra: { height: "100%", background: "var(--grafico)", borderRadius: 5 },
+  grafPct: { fontSize: 11.5, color: "var(--texto-5)" },
+
+  colunasWrap: { display: "flex", alignItems: "flex-end", gap: 6, height: 150, marginTop: 4 },
+  colunaCol: { flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 4, height: "100%" },
+  colunaValor: { fontSize: 10.5, color: "var(--texto-5)", fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" },
+  colunaTrilho: { flex: 1, width: "100%", display: "flex", alignItems: "flex-end" },
+  colunaBarra: { width: "100%", borderRadius: "4px 4px 0 0" },
+  colunaRotulo: { fontSize: 11, fontWeight: 600 },
+
   fixoAviso: { fontSize: 12.5, lineHeight: 1.5, color: "var(--ambar)", background: "color-mix(in srgb, var(--ambar) 10%, transparent)", border: "1px solid color-mix(in srgb, var(--ambar) 28%, transparent)", borderRadius: 10, padding: "9px 12px", marginTop: 14 },
   fixoValorLinha: { display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 8, marginTop: 8, paddingTop: 8, borderTop: "1px dashed var(--borda)" },
   fixoValor: { width: 120, boxSizing: "border-box", background: "var(--campo)", border: "1px solid var(--campo-borda)", borderRadius: 8, padding: "6px 9px", color: "var(--texto)", fontSize: 13.5, textAlign: "right", fontVariantNumeric: "tabular-nums", outline: "none" },

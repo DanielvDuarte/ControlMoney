@@ -31,6 +31,10 @@
         --vermelho: #f87171;     --vermelho-borda: #7f1d1d;
         --ambar: #fbbf24;        --ambar-texto: #8b6b2e;
         --azul: #38bdf8;
+        /* Cor das barras dos gráficos. Um tom por tema, cada um validado
+           contra a sua própria superfície (>= 3:1). Não é um espelho
+           automático do outro. */
+        --grafico: #38bdf8;
         --sombra: rgba(4,7,12,0.7);
       }
       :root[data-tema="claro"] {
@@ -48,6 +52,7 @@
         --vermelho: #dc2626;     --vermelho-borda: #fca5a5;
         --ambar: #b45309;        --ambar-texto: #92400e;
         --azul: #0284c7;
+        --grafico: #0284c7;
         --sombra: rgba(15,23,42,0.45);
       }
       * { margin: 0; padding: 0; box-sizing: border-box; }

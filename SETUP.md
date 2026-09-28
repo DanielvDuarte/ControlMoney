@@ -561,6 +561,41 @@ estável no JavaScript moderno, então isso preserva a ordem em vez de embaralha
 A escolha vive em `localStorage`, não no banco: é preferência de quem está
 olhando, não dado do mês.
 
+## Gráficos
+
+Barras de uma cor só, em HTML/CSS — não SVG, não biblioteca. O comprimento
+carrega a magnitude e o nome vai escrito ao lado, então a cor não precisa
+distinguir coisa nenhuma.
+
+**Por que não usar as cores das categorias.** A paleta `CORES_CAT` foi medida
+com o validador de paletas (checagem de luminosidade, croma, separação sob
+daltonismo simulado e contraste). Como preenchimento de gráfico ela reprova:
+as dez cores ficam acima da faixa de luminosidade do tema escuro, o pior par
+adjacente tem ΔE 4,6 sob protanopia/deuteranopia (o piso é 6), e no tema claro
+todas ficam abaixo de 3:1 contra o branco. Elas continuam ótimas como bolinha
+de 9px, que é marca de identidade e não dado — mas pintar áreas com elas
+entregaria um gráfico ilegível para parte das pessoas.
+
+A cor das barras é o token `--grafico`, com um tom por tema (`#38bdf8` no
+escuro, `#0284c7` no claro), cada um validado contra a **sua** superfície:
+4,21:1 e 4,10:1. Não é um espelho automático do outro.
+
+Outras decisões que vieram do guia de visualização:
+
+- **Cauda dobrada em "Outras".** Acima de oito faixas a leitura vira lista;
+  o excedente soma numa linha só.
+- **Ênfase em vez de categórico** no gráfico de meses: o mês aberto na cor
+  cheia, os outros em cinza. A pergunta ali é "como está este mês", não
+  "qual mês é qual".
+- **Sem legenda**, porque é uma série só e todas as barras têm rótulo direto.
+- **Números completos ficam na lista do mês.** O gráfico mostra tamanho
+  relativo; quem precisa do valor exato tem a tabela ao lado.
+
+Uma lição do processo: a primeira maquete saiu com todas as barras do mesmo
+tamanho, porque a formatação de moeda trocou o ponto por vírgula **dentro do
+`width:38.5%`** e o CSS inteiro virou lixo. O validador testa cor, não
+geometria — por isso o passo de renderizar e olhar não é opcional.
+
 ## Rotina de manutenção
 
 **Alterar o app:** edite, `git push`, e o deploy sai sozinho em ~1 minuto.
