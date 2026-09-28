@@ -947,6 +947,25 @@ function Painel({ usuario }) {
         fixo_id: i === 0 ? fixoId : null,
       }));
 
+      // Caso simples (uma linha virando uma linha): atualiza no lugar. Além de
+      // ser mais barato, evita a colisão com o índice único
+      // (user_id, mes, fixo_id): apagar-e-recriar faria a linha nova existir ao
+      // mesmo tempo que a velha, e toda edição de conta fixa era recusada com
+      // "chave duplicada".
+      if (existentes.length === 1 && n === 1) {
+        const { id, ...campos } = { ...novas[0] };
+        const { error } = await supabase.from("gastos").update(campos).eq("id", editando.id);
+        if (error) { setErroGlobal("Não consegui salvar: " + error.message); return; }
+        fechar(); carregarMes(mesAtual); return;
+      }
+
+      // Reescrita de série. O vínculo com a conta fixa sai das linhas velhas
+      // antes da inserção, senão a nova linha do mês inicial colide com a
+      // antiga no mesmo índice único.
+      if (fixoId) {
+        await supabase.from("gastos").update({ fixo_id: null })
+          .in("id", existentes.map(g => g.id));
+      }
       // Insere antes de apagar: se algo falhar, nada é perdido.
       const { error } = await supabase.from("gastos").insert(novas);
       if (error) { setErroGlobal("Não consegui salvar: " + error.message); return; }
@@ -1586,9 +1605,9 @@ function ModalFixos({ fixos, categorias, onFechar, onAlterar, onValor, onRemover
                   {!f.ativo && " · pausada"}
                 </div>
               </div>
-              <span style={S.fixoDiaRotulo}>dia</span>
+              <span style={S.fixoDiaRotulo} title="Dia do vencimento">vence dia</span>
               <input type="number" min={1} max={31} style={S.fixoDia} defaultValue={f.dia}
-                aria-label={`Dia de ${f.nome}`}
+                aria-label={`Dia de vencimento de ${f.nome}`}
                 onBlur={e => { const d = Math.min(31, Math.max(1, Number(e.target.value) || 1)); if (d !== f.dia) onAlterar(f.id, { dia: d }); }} />
               <button style={S.iconBtn} onClick={() => onAlterar(f.id, { ativo: !f.ativo })}
                 aria-label={f.ativo ? `Pausar ${f.nome}` : `Retomar ${f.nome}`}
