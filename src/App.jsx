@@ -346,8 +346,9 @@ function Painel({ usuario }) {
   const [modalFixos, setModalFixos] = useState(false);
   const [modalLixeira, setModalLixeira] = useState(false);
   const [modalMetas, setModalMetas] = useState(false);
-  const [modalGraficos, setModalGraficos] = useState(false);
-  const [serieMeses, setSerieMeses] = useState([]);
+  const [verGrafico, setVerGrafico] = useState(() => {
+    try { return localStorage.getItem("ver-grafico") === "1"; } catch { return false; }
+  });
   const [modalPerfil, setModalPerfil] = useState(false);
   const [modalAgente, setModalAgente] = useState(false);
   const [iaLiberado, setIaLiberado] = useState(false);
@@ -1323,21 +1324,6 @@ function Painel({ usuario }) {
     carregarMes(mesAtual);
   };
 
-  // Seis meses de totais para o gráfico de colunas. Uma consulta só, somando
-  // no cliente — é bem menos dado do que a lista de um mês.
-  const abrirGraficos = async () => {
-    const inicio = addMeses(mesAtual, -5);
-    const { data } = await supabase.from("gastos")
-      .select("mes, valor").gte("mes", inicio).lte("mes", mesAtual);
-    const totais = {};
-    (data || []).forEach(g => { totais[g.mes] = (totais[g.mes] || 0) + Number(g.valor || 0); });
-    setSerieMeses(Array.from({ length: 6 }, (_, i) => {
-      const mes = addMeses(inicio, i);
-      return { mes, total: totais[mes] || 0 };
-    }));
-    setModalGraficos(true);
-  };
-
   const abrirNovo = () => { setErroGlobal(""); setEditando(null); setModalGasto(true); };
   const abrirEdicao = (g) => { setErroGlobal(""); setEditando({ ...g, categoriaNome: catPorId[g.categoria_id]?.nome }); setModalGasto(true); };
   const fechar = () => { setModalGasto(false); setEditando(null); };
@@ -1458,8 +1444,13 @@ function Painel({ usuario }) {
           <button style={S.btnSecundario} onClick={() => setModalFixos(true)}>
             <Repeat size={14} /> Contas fixas{fixos.length ? ` (${fixos.length})` : ""}
           </button>
-          <button style={S.btnSecundario} onClick={abrirGraficos}>
-            <PieChart size={14} /> Gráficos
+          <button style={{ ...S.btnSecundario, ...(verGrafico ? S.btnSecundarioAtivo : null) }}
+            aria-pressed={verGrafico}
+            onClick={() => setVerGrafico(v => {
+              try { localStorage.setItem("ver-grafico", v ? "0" : "1"); } catch { /* privativa */ }
+              return !v;
+            })}>
+            <PieChart size={14} /> Gráfico
           </button>
           <button style={S.btnSecundario} onClick={() => setModalMetas(true)}>
             <Target size={14} /> Metas{Object.keys(metas).length ? ` (${Object.keys(metas).length})` : ""}
@@ -1471,6 +1462,10 @@ function Painel({ usuario }) {
             <Printer size={14} /> PDF
           </button>
         </div>
+
+        {verGrafico && !carregando && !falhaRede && gastos.length > 0 && (
+          <BarrasCategoria grupos={porCategoria} total={totais.total} mes={mesAtual} />
+        )}
 
         {!carregando && gastos.length > 0 && (
           <div style={S.barraOrdem}>
@@ -1588,8 +1583,6 @@ function Painel({ usuario }) {
         onConsentir={consentirAgente} onNivel={definirNivelAgente}
         onFechar={() => setModalAgente(false)} />}
       {modalPerfil && <ModalPerfil usuario={usuario} onFechar={() => setModalPerfil(false)} />}
-      {modalGraficos && <ModalGraficos mes={mesAtual} grupos={porCategoria} total={totais.total}
-        serie={serieMeses} onFechar={() => setModalGraficos(false)} />}
       {modalMetas && <ModalMetas categorias={categorias} metas={metas} mes={mesAtual} onSalvar={salvarMetas}
         gastoPorCategoria={gastoPorCategoria} renda={rendaTotal}
         onFechar={() => setModalMetas(false)} />}
@@ -2563,8 +2556,9 @@ function LinhaMeta({ cat, valor, gasto, mudou, onMexer }) {
 // ============================================================
 const MAX_BARRAS = 8;
 
-function BarrasCategoria({ grupos, total }) {
-  if (!total) return <div style={S.catVazio}>Nenhum gasto neste mês para desenhar.</div>;
+function BarrasCategoria({ grupos, total, mes }) {
+  const { y, m } = parseKey(mes);
+  if (!total) return null;
 
   // Cauda dobrada em "Outras": além de ~8 faixas a leitura vira lista, não gráfico.
   const ordenados = [...grupos].sort((a, b) => b.subtotal - a.subtotal);
@@ -2576,7 +2570,12 @@ function BarrasCategoria({ grupos, total }) {
   const maior = linhas[0]?.subtotal || 1;
 
   return (
-    <div style={S.grafLista}>
+    <section style={S.grafCartao}>
+      <div style={S.grafCabecalho}>
+        <span style={S.grafTitulo}>Para onde foi o dinheiro</span>
+        <span style={S.grafMes}>{MESES[m]} de {y}</span>
+      </div>
+      <div style={S.grafLista}>
       {linhas.map(l => (
         <div key={l.nome} style={S.grafLinha}>
           <div style={S.grafTopo}>
@@ -2590,62 +2589,8 @@ function BarrasCategoria({ grupos, total }) {
           <div style={S.grafPct}>{pctTxt((l.subtotal / total) * 100)} do mês</div>
         </div>
       ))}
-    </div>
-  );
-}
-
-function ColunasMes({ serie, mesAtual }) {
-  const maior = Math.max(...serie.map(s => s.total), 1);
-  const compacto = (v) => v >= 1000
-    ? `${(v / 1000).toLocaleString("pt-BR", { maximumFractionDigits: 1 })} mil`
-    : Math.round(v).toString();
-
-  return (
-    <div style={S.colunasWrap}>
-      {serie.map(s => {
-        const p = parseKey(s.mes);
-        const atual = s.mes === mesAtual;
-        return (
-          <div key={s.mes} style={S.colunaCol} title={`${MESES[p.m]}/${p.y}: ${brl(s.total)}`}>
-            <div style={S.colunaValor}>{s.total ? compacto(s.total) : ""}</div>
-            <div style={S.colunaTrilho}>
-              <div style={{
-                ...S.colunaBarra,
-                height: `${Math.max(2, (s.total / maior) * 100)}%`,
-                // Emphasis: o mês aberto em destaque, os outros como contexto.
-                background: atual ? "var(--grafico)" : "var(--borda-3)",
-              }} />
-            </div>
-            <div style={{ ...S.colunaRotulo, color: atual ? "var(--texto-2)" : "var(--texto-5)" }}>
-              {MESES[p.m].slice(0, 3)}
-            </div>
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-
-function ModalGraficos({ mes, grupos, total, serie, onFechar }) {
-  const { y, m } = parseKey(mes);
-  return (
-    <Overlay onFechar={onFechar}>
-      <h2 style={S.modalTitulo}>Para onde foi o dinheiro</h2>
-      <p style={S.modalAjuda}>{MESES[m]} de {y} — {brl(total)} no total.</p>
-
-      <BarrasCategoria grupos={grupos} total={total} />
-
-      <div style={S.passo}><span style={S.passoNum}>6</span> meses de gastos</div>
-      <ColunasMes serie={serie} mesAtual={mes} />
-      <p style={S.dicaCampo}>
-        O mês aberto aparece em destaque; os outros ficam em cinza como contexto.
-        Os números estão todos na lista do mês — o gráfico só mostra o tamanho relativo.
-      </p>
-
-      <div style={S.modalAcoes}>
-        <button style={S.btnSec} onClick={onFechar}>Fechar</button>
       </div>
-    </Overlay>
+    </section>
   );
 }
 
@@ -3277,6 +3222,7 @@ const S = {
   // Quatro botões não cabem lado a lado no celular: com wrap eles viram 2x2 lá
   // e continuam numa linha só no computador.
   linhaSecundaria: { display: "flex", flexWrap: "wrap", gap: 8, marginTop: -8, marginBottom: 18 },
+  btnSecundarioAtivo: { borderStyle: "solid", borderColor: "var(--grafico)", color: "var(--grafico)" },
   btnSecundario: { flex: "1 1 140px", display: "flex", alignItems: "center", justifyContent: "center", gap: 6, background: "transparent", border: "1px dashed var(--borda)", borderRadius: 12, padding: "10px 6px", color: "var(--texto-4)", fontSize: 13, fontWeight: 600, cursor: "pointer" },
   seloFixa: { fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.04em", color: "var(--azul)", background: "color-mix(in srgb, var(--azul) 14%, transparent)", borderRadius: 99, padding: "1px 6px", flexShrink: 0 },
   avisoFixo: { display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginTop: 18, fontSize: 12.5, lineHeight: 1.5, color: "var(--azul)", background: "color-mix(in srgb, var(--azul) 10%, transparent)", border: "1px solid color-mix(in srgb, var(--azul) 28%, transparent)", borderRadius: 11, padding: "10px 12px" },
@@ -3297,12 +3243,10 @@ const S = {
   grafBarra: { height: "100%", background: "var(--grafico)", borderRadius: 5 },
   grafPct: { fontSize: 11.5, color: "var(--texto-5)" },
 
-  colunasWrap: { display: "flex", alignItems: "flex-end", gap: 6, height: 150, marginTop: 4 },
-  colunaCol: { flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 4, height: "100%" },
-  colunaValor: { fontSize: 10.5, color: "var(--texto-5)", fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" },
-  colunaTrilho: { flex: 1, width: "100%", display: "flex", alignItems: "flex-end" },
-  colunaBarra: { width: "100%", borderRadius: "4px 4px 0 0" },
-  colunaRotulo: { fontSize: 11, fontWeight: 600 },
+  grafCartao: { background: "var(--superficie)", border: "1px solid var(--borda)", borderRadius: 14, padding: "14px 14px 16px", marginBottom: 18 },
+  grafCabecalho: { display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 8, marginBottom: 12 },
+  grafTitulo: { fontSize: 13.5, fontWeight: 700, letterSpacing: "-0.01em" },
+  grafMes: { fontSize: 11.5, color: "var(--texto-5)" },
 
   fixoAviso: { fontSize: 12.5, lineHeight: 1.5, color: "var(--ambar)", background: "color-mix(in srgb, var(--ambar) 10%, transparent)", border: "1px solid color-mix(in srgb, var(--ambar) 28%, transparent)", borderRadius: 10, padding: "9px 12px", marginTop: 14 },
   fixoValorLinha: { display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 8, marginTop: 8, paddingTop: 8, borderTop: "1px dashed var(--borda)" },
