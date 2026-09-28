@@ -369,6 +369,35 @@ distribuição dos gastos ao longo do mês.
 Linhas antigas ficam com `data` nula e vão para o fim da lista
 (`nullsFirst: false`), sem quebrar nada.
 
+## Contas fixas: a regra da replicação
+
+Tudo o que se replica parte do **mês aberto na tela**, não do mês de hoje.
+Estando em outubro e salvando uma alteração, ela vale de outubro em diante;
+avançando para novembro e apagando, apaga de novembro em diante. O mês na
+barra superior é o ponto de corte — é o modelo mental que o app inteiro segue.
+
+Três coisas nunca são tocadas por uma replicação:
+
+- **Meses anteriores ao aberto.** São registro do que aconteceu.
+- **Lançamentos pagos**, mesmo à frente. Pagar é fato consumado.
+- **Valores digitados à mão.** `replicarValorFixo()` só altera o lançamento
+  que ainda está com o valor que o molde deu (ou zerado, "a preencher"). Se
+  você corrigiu a luz de novembro para R$ 268 e depois muda o molde para
+  R$ 240, novembro fica em R$ 268 — e o aviso diz quantos foram preservados.
+  Sem isso, uma correção deliberada sumiria sem ninguém perceber.
+
+O menu de contas fixas salva **em lote e explicitamente**: os campos alimentam
+um rascunho, os cartões alterados ficam com borda âmbar, e o botão "Salvar
+alterações" pede confirmação dizendo de que mês em diante a mudança vale.
+Salvar ao sair do campo seria cômodo, mas esconde uma escrita que atravessa
+vários meses.
+
+Editar o valor de um lançamento de conta fixa na tela inicial cai no mesmo
+dilema, e ali não há como adivinhar: a conta veio diferente **este mês** ou o
+preço **mudou de vez**? O app pergunta, com as duas saídas. Escolhendo
+"deste mês em diante", o molde é atualizado e a replicação segue as três
+regras acima.
+
 ## Contas fixas
 
 Conta fixa não é parcelamento: não tem fim, e o valor varia (água e luz mudam

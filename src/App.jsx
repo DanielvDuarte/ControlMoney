@@ -956,7 +956,32 @@ function Painel({ usuario }) {
         const { id, ...campos } = { ...novas[0] };
         const { error } = await supabase.from("gastos").update(campos).eq("id", editando.id);
         if (error) { setErroGlobal("Não consegui salvar: " + error.message); return; }
-        fechar(); carregarMes(mesAtual); return;
+        fechar();
+
+        // Lançamento de conta fixa com valor novo: a mudança pode ser só deste
+        // mês (a conta veio diferente) ou permanente (o preço mudou). Só quem
+        // está lançando sabe qual das duas — então perguntamos.
+        const valorNovo = Number(campos.valor);
+        if (fixoId && valorNovo > 0 && valorNovo !== Number(editando.valor)) {
+          const molde = fixos.find(f => f.id === fixoId);
+          const escolha = await perguntar({
+            titulo: "Esta é uma conta fixa",
+            texto: `"${nome}" passou de ${brl(editando.valor)} para ${brl(valorNovo)}.`,
+            nota: "Replicar mexe só nos meses seguintes ainda não pagos que continuam " +
+                  "com o valor antigo — o que você já corrigiu à mão fica como está.",
+            acoes: [{ id: "so-este", rotulo: "Só neste mês" },
+                    { id: "replicar", rotulo: "Deste mês em diante" }],
+          });
+          if (escolha === "replicar" && molde) {
+            await alterarFixo(fixoId, { valor: valorNovo });
+            const { atualizados, preservados } = await replicarValorFixo(molde, valorNovo, addMeses(mesAtual, 1));
+            const p = [`"${nome}" agora vale ${brl(valorNovo)} nos próximos meses`];
+            if (atualizados) p.push(`${atualizados} já atualizado${atualizados > 1 ? "s" : ""}`);
+            if (preservados) p.push(`${preservados} preservado${preservados > 1 ? "s" : ""}`);
+            setAviso({ texto: p.join(" · "), ids: [] });
+          }
+        }
+        carregarMes(mesAtual); return;
       }
 
       // Reescrita de série. O vínculo com a conta fixa sai das linhas velhas
@@ -1130,17 +1155,61 @@ function Painel({ usuario }) {
   // valor já tem o lançamento criado, zerado. Só mexe no que ainda não é seu —
   // não pago, do mês corrente em diante, e ainda zerado ou com o valor antigo
   // desta conta. Um valor que você digitou no mês nunca é sobrescrito.
-  const definirValorFixo = async (f, valor) => {
-    const error = await alterarFixo(f.id, { valor });
-    if (error || !(valor > 0)) return error;
+  // Replica o valor de uma conta fixa do MÊS ABERTO em diante. Meses passados
+  // e lançamentos pagos nunca são tocados — são registro do que aconteceu.
+  // Um mês onde você digitou um valor diferente do molde também é preservado:
+  // aquilo foi correção deliberada. Devolve a contagem para o aviso dizer.
+  const replicarValorFixo = async (f, valor, desdeMes) => {
     const antigo = Number(f.valor) || 0;
-    await supabase.from("gastos").update({ valor })
-      .eq("fixo_id", f.id).eq("pago", false)
-      .in("valor", antigo > 0 ? [0, antigo] : [0])
-      .gte("mes", hojeISO().slice(0, 7));
-    carregarMes(mesAtual);
-    return null;
+    const { data: adiante } = await supabase.from("gastos")
+      .select("id, valor").eq("fixo_id", f.id).eq("pago", false).gte("mes", desdeMes);
+
+    const candidatos = adiante || [];
+    // "Intocado" = ainda com o valor que o molde deu, ou zerado (a preencher).
+    const intocados = candidatos.filter(g => Number(g.valor) === antigo || Number(g.valor) === 0);
+    if (intocados.length) {
+      await supabase.from("gastos").update({ valor }).in("id", intocados.map(g => g.id));
+    }
+    return { atualizados: intocados.length, preservados: candidatos.length - intocados.length };
   };
+
+  // Aplica de uma vez as alterações pendentes do menu de contas fixas.
+  // O aviso antes de gravar é o que torna a replicação previsível: quem salva
+  // sabe que está mexendo deste mês em diante, não só no molde.
+  const salvarFixos = async (alteracoes) => {
+    const { m, y } = parseKey(mesAtual);
+    const escolha = await perguntar({
+      titulo: `Salvar ${alteracoes.length} alteraç${alteracoes.length > 1 ? "ões" : "ão"}?`,
+      texto: `Vale de ${MESES[m]}/${y} em diante.`,
+      nota: "Meses anteriores e lançamentos já pagos não são tocados, e um mês " +
+            "onde você digitou outro valor à mão fica como está.",
+      acoes: [{ id: "salvar", rotulo: "Salvar" }],
+    });
+    if (escolha !== "salvar") return false;
+
+    let atualizados = 0, preservados = 0;
+    for (const a of alteracoes) {
+      const campos = {};
+      if (a.dia !== undefined) campos.dia = a.dia;
+      if (a.valor !== undefined) campos.valor = a.valor;
+      const erro = await alterarFixo(a.fixo.id, campos);
+      if (erro) { setAviso({ texto: `"${a.fixo.nome}": ${erro.message}`, ids: [] }); return false; }
+
+      if (a.valor > 0) {
+        const r = await replicarValorFixo(a.fixo, a.valor, mesAtual);
+        atualizados += r.atualizados;
+        preservados += r.preservados;
+      }
+    }
+
+    const p = [`${alteracoes.length} conta${alteracoes.length > 1 ? "s" : ""} salva${alteracoes.length > 1 ? "s" : ""}`];
+    if (atualizados) p.push(`${atualizados} lançamento${atualizados > 1 ? "s" : ""} atualizado${atualizados > 1 ? "s" : ""}`);
+    if (preservados) p.push(`${preservados} preservado${preservados > 1 ? "s" : ""} (valor digitado à mão)`);
+    setAviso({ texto: p.join(" · "), ids: [] });
+    carregarMes(mesAtual);
+    return true;
+  };
+
 
   const removerFixo = async (f) => {
     const escolha = await perguntar({
@@ -1155,15 +1224,15 @@ function Painel({ usuario }) {
     // criado; parar o modelo não os alcança. Oferecemos limpar só os que
     // ainda não foram pagos, e só depois do mês aberto.
     const { data: futuros } = await supabase.from("gastos")
-      .select("*").eq("fixo_id", f.id).eq("pago", false).gt("mes", mesAtual);
+      .select("*").eq("fixo_id", f.id).eq("pago", false).gte("mes", mesAtual);
 
     if (futuros?.length) {
       const meses = [...new Set(futuros.map(g => g.mes))].sort();
       const lista = meses.map(m => { const p = parseKey(m); return `${MESES[p.m]}/${p.y}`; }).join(", ");
       const comFuturos = await perguntar({
-        titulo: "E os lançamentos que já estão à frente?",
-        texto: `"${f.nome}" já está lançado em ${meses.length} mês${meses.length > 1 ? "es" : ""} ` +
-               `ainda não pago${meses.length > 1 ? "s" : ""}: ${lista}.`,
+        titulo: "E os lançamentos deste mês em diante?",
+        texto: `"${f.nome}" está lançado em ${meses.length} mês${meses.length > 1 ? "es" : ""} ` +
+               `ainda não pago${meses.length > 1 ? "s" : ""}, deste em diante: ${lista}.`,
         acoes: [{ id: "manter", rotulo: "Deixar como estão" },
                 { id: "apagar", rotulo: "Apagar também", tom: "perigo" }],
       });
@@ -1414,7 +1483,7 @@ function Painel({ usuario }) {
       {modalImportar && <ModalImportar categorias={categorias} onFechar={() => setModalImportar(false)}
         onPreparar={prepararImportacao} onImportar={importarGastos} />}
       {modalFixos && <ModalFixos fixos={fixos} categorias={categorias} onFechar={() => setModalFixos(false)}
-        onAlterar={alterarFixo} onValor={definirValorFixo} onRemover={removerFixo} />}
+        mes={mesAtual} onAlterar={alterarFixo} onSalvar={salvarFixos} onRemover={removerFixo} />}
       {modalAgente && <ModalAgente mes={mesAtual} perfil={iaPerfil}
         onConsentir={consentirAgente} onNivel={definirNivelAgente}
         onFechar={() => setModalAgente(false)} />}
@@ -1532,40 +1601,51 @@ function ModalEntradas({ renda, entradas, mes, onFechar, onSalvarRenda, onAdicio
 
 // Valor de uma conta fixa. Guarda sozinho ao sair do campo, como o dia ao
 // lado — sem botão de salvar para cada linha.
-function ValorFixo({ fixo, onValor }) {
-  const [v, setV] = useState(fixo.valor ?? "");
-  const [erro, setErro] = useState("");
+function ModalFixos({ fixos, categorias, mes, onFechar, onAlterar, onSalvar, onRemover }) {
+  const nomeCat = (id) => categorias.find(c => c.id === id)?.nome || "Sem categoria";
+  const { m, y } = parseKey(mes);
+
+  // Rascunho: o que foi digitado mas ainda não gravado. Salvar é explícito
+  // porque a gravação replica para os meses seguintes — não é o tipo de coisa
+  // que deve acontecer só por sair de um campo.
+  const [rascunho, setRascunho] = useState({});
+  const [salvando, setSalvando] = useState(false);
+
+  const campo = (f, nome) => {
+    const r = rascunho[f.id]?.[nome];
+    if (r !== undefined) return r;
+    return nome === "valor" ? (f.valor ?? "") : f.dia;
+  };
+  const mexer = (f, nome, valor) =>
+    setRascunho(r => ({ ...r, [f.id]: { ...r[f.id], [nome]: valor } }));
+
+  // Só entra na lista o que de fato mudou em relação ao que está gravado.
+  const pendentes = Object.entries(rascunho).map(([id, campos]) => {
+    const f = fixos.find(x => x.id === id);
+    if (!f) return null;
+    const a = { fixo: f };
+    if (campos.valor !== undefined) {
+      const novo = campos.valor === "" ? null : Number(campos.valor);
+      const atual = f.valor == null ? null : Number(f.valor);
+      if (novo !== atual) a.valor = novo;
+    }
+    if (campos.dia !== undefined) {
+      const d = Math.min(31, Math.max(1, Number(campos.dia) || 1));
+      if (d !== f.dia) a.dia = d;
+    }
+    return a.valor !== undefined || a.dia !== undefined ? a : null;
+  }).filter(Boolean);
 
   const guardar = async () => {
-    const novo = v === "" ? null : Number(v);
-    const atual = fixo.valor == null ? null : Number(fixo.valor);
-    if (novo === atual) return;
-    const e = await onValor(fixo, novo);
-    setErro(!e ? ""
-      : /valor|column|schema cache/i.test(e.message)
-        ? "O banco ainda não tem esta coluna: rode o schema.sql de novo no Supabase."
-        : "Não consegui guardar: " + e.message);
+    setSalvando(true);
+    const ok = await onSalvar(pendentes);
+    setSalvando(false);
+    if (ok) setRascunho({});
   };
 
-  return (
-    <>
-      <div style={S.fixoValorLinha}>
-        <span style={S.fixoDiaRotulo}>valor por mês</span>
-        <CampoValor style={S.fixoValor} value={v} onChange={setV} onBlur={guardar}
-          aria-label={`Valor mensal de ${fixo.nome}`} />
-      </div>
-      {erro && <div style={{ ...S.erro, marginTop: 6, fontSize: 12 }}><AlertCircle size={13} /><span>{erro}</span></div>}
-    </>
-  );
-}
-
-function ModalFixos({ fixos, categorias, onFechar, onAlterar, onValor, onRemover }) {
-  const nomeCat = (id) => categorias.find(c => c.id === id)?.nome || "Sem categoria";
-
-  // Só as ativas contam: uma conta pausada não está saindo do bolso agora.
   const ativas = fixos.filter(f => f.ativo);
-  const comValor = ativas.filter(f => Number(f.valor) > 0);
-  const totalFixo = comValor.reduce((s, f) => s + Number(f.valor), 0);
+  const comValor = ativas.filter(f => Number(campo(f, "valor")) > 0);
+  const totalFixo = comValor.reduce((s, f) => s + Number(campo(f, "valor")), 0);
 
   return (
     <Overlay onFechar={onFechar}>
@@ -1594,55 +1674,76 @@ function ModalFixos({ fixos, categorias, onFechar, onAlterar, onValor, onRemover
           </div>
           <div style={S.fixoTotalValor}>{brl(totalFixo)}</div>
         </div>
+
         <div style={S.catLista}>
-          {fixos.map(f => (
-            <div key={f.id} style={{ ...S.fixoCartao, opacity: f.ativo ? 1 : 0.5 }}>
-            <div style={S.fixoTopo}>
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={S.fixoNome}>{f.nome}</div>
-                <div style={S.fixoMeta}>
-                  {nomeCat(f.categoria_id)}{f.subcategoria ? ` · ${f.subcategoria}` : ""}
-                  {!f.ativo && " · pausada"}
+          {fixos.map(f => {
+            const mudou = pendentes.some(p => p.fixo.id === f.id);
+            return (
+            <div key={f.id} style={{ ...S.fixoCartao, opacity: f.ativo ? 1 : 0.5,
+                 borderColor: mudou ? "var(--ambar)" : "var(--borda)" }}>
+              <div style={S.fixoTopo}>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={S.fixoNome}>{f.nome}</div>
+                  <div style={S.fixoMeta}>
+                    {nomeCat(f.categoria_id)}{f.subcategoria ? ` · ${f.subcategoria}` : ""}
+                    {!f.ativo && " · pausada"}
+                    {mudou && " · alterada"}
+                  </div>
                 </div>
+                <span style={S.fixoDiaRotulo} title="Dia do vencimento">vence dia</span>
+                <input type="number" min={1} max={31} style={S.fixoDia} value={campo(f, "dia")}
+                  aria-label={`Dia de vencimento de ${f.nome}`}
+                  onChange={e => mexer(f, "dia", e.target.value)} />
+                <button style={S.iconBtn} onClick={() => onAlterar(f.id, { ativo: !f.ativo })}
+                  aria-label={f.ativo ? `Pausar ${f.nome}` : `Retomar ${f.nome}`}
+                  title={f.ativo ? "Pausar" : "Retomar"}>
+                  {f.ativo ? <Pause size={14} /> : <Play size={14} />}
+                </button>
+                <button style={S.iconBtn} onClick={() => onRemover(f)} aria-label={`Parar ${f.nome}`}>
+                  <Trash2 size={14} />
+                </button>
               </div>
-              <span style={S.fixoDiaRotulo} title="Dia do vencimento">vence dia</span>
-              <input type="number" min={1} max={31} style={S.fixoDia} defaultValue={f.dia}
-                aria-label={`Dia de vencimento de ${f.nome}`}
-                onBlur={e => { const d = Math.min(31, Math.max(1, Number(e.target.value) || 1)); if (d !== f.dia) onAlterar(f.id, { dia: d }); }} />
-              <button style={S.iconBtn} onClick={() => onAlterar(f.id, { ativo: !f.ativo })}
-                aria-label={f.ativo ? `Pausar ${f.nome}` : `Retomar ${f.nome}`}
-                title={f.ativo ? "Pausar" : "Retomar"}>
-                {f.ativo ? <Pause size={14} /> : <Play size={14} />}
-              </button>
-              <button style={S.iconBtn} onClick={() => onRemover(f)} aria-label={`Parar ${f.nome}`}>
-                <Trash2 size={14} />
-              </button>
+              <div style={S.fixoValorLinha}>
+                <span style={S.fixoDiaRotulo}>valor por mês</span>
+                <CampoValor style={S.fixoValor} value={campo(f, "valor")}
+                  onChange={v => mexer(f, "valor", v)}
+                  aria-label={`Valor mensal de ${f.nome}`} />
+              </div>
             </div>
-            <ValorFixo fixo={f} onValor={onValor} />
-            </div>
-          ))}
+            );
+          })}
+
           <p style={S.dicaCampo}>
-            O <b>valor por mês</b> é opcional. Informado, ele já entra nos meses
-            novos e nos lançamentos ainda não pagos a partir deste mês — sem
-            mexer em nenhum valor que você tenha digitado no mês. Deixe vazio nas
-            contas que mudam todo mês, como água e luz.
+            O <b>valor por mês</b> é opcional — deixe vazio nas contas que mudam
+            sempre, como água e luz, para elas entrarem zeradas e você conferir
+            o que a conta trouxe.
           </p>
           <p style={S.dicaCampo}>
             <b>Pausar</b> serve para uma interrupção temporária; a <b>lixeira</b>
-            encerra de vez — e, se houver lançamentos em meses à frente ainda não
-            pagos, ela pergunta se quer apagá-los também. O histórico nunca é tocado.
+            encerra de vez, e oferece apagar os lançamentos deste mês em diante
+            que ainda não foram pagos. O histórico nunca é tocado.
           </p>
         </div>
         </>
       )}
 
+      {pendentes.length > 0 && (
+        <div style={S.fixoAviso}>
+          {pendentes.length} alteraç{pendentes.length > 1 ? "ões" : "ão"} por salvar.
+          Ao salvar, vale de <b>{MESES[m]}/{y}</b> em diante.
+        </div>
+      )}
+
       <div style={S.modalAcoes}>
         <button style={S.btnSec} onClick={onFechar}>Fechar</button>
+        <button style={{ ...S.btnPri, opacity: pendentes.length && !salvando ? 1 : 0.5 }}
+          disabled={!pendentes.length || salvando} onClick={guardar}>
+          {salvando ? "Salvando…" : "Salvar alterações"}
+        </button>
       </div>
     </Overlay>
   );
 }
-
 function ModalImportar({ categorias, onFechar, onPreparar, onImportar }) {
   const [linhas, setLinhas] = useState(null);   // null = ainda sem arquivo
   const [mostrarCreditos, setMostrarCreditos] = useState(false);
@@ -2979,6 +3080,7 @@ const S = {
   fixoDiaRotulo: { fontSize: 11.5, color: "var(--texto-5)" },
   fixoCartao: { border: "1px solid var(--borda)", background: "var(--superficie)", borderRadius: 11, padding: "10px 8px 10px 12px" },
   fixoTopo: { display: "flex", alignItems: "center", gap: 9 },
+  fixoAviso: { fontSize: 12.5, lineHeight: 1.5, color: "var(--ambar)", background: "color-mix(in srgb, var(--ambar) 10%, transparent)", border: "1px solid color-mix(in srgb, var(--ambar) 28%, transparent)", borderRadius: 10, padding: "9px 12px", marginTop: 14 },
   fixoValorLinha: { display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 8, marginTop: 8, paddingTop: 8, borderTop: "1px dashed var(--borda)" },
   fixoValor: { width: 120, boxSizing: "border-box", background: "var(--campo)", border: "1px solid var(--campo-borda)", borderRadius: 8, padding: "6px 9px", color: "var(--texto)", fontSize: 13.5, textAlign: "right", fontVariantNumeric: "tabular-nums", outline: "none" },
   fixoTotal: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, background: "var(--superficie-2)", border: "1px solid var(--borda)", borderRadius: 12, padding: "12px 14px", marginBottom: 12 },
