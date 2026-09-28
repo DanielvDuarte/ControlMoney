@@ -563,38 +563,32 @@ olhando, não dado do mês.
 
 ## Gráficos
 
-Barras de uma cor só, em HTML/CSS — não SVG, não biblioteca. O comprimento
-carrega a magnitude e o nome vai escrito ao lado, então a cor não precisa
-distinguir coisa nenhuma.
+Uma rosca com as categorias do mês aberto, ligada e desligada no botão
+**Gráfico** (a escolha fica no aparelho, como a ordenação). Seis fatias no
+máximo; o resto soma em "Outras", porque abaixo disso as fatias ficam finas
+demais para serem lidas.
 
-**Por que não usar as cores das categorias.** A paleta `CORES_CAT` foi medida
-com o validador de paletas (checagem de luminosidade, croma, separação sob
-daltonismo simulado e contraste). Como preenchimento de gráfico ela reprova:
-as dez cores ficam acima da faixa de luminosidade do tema escuro, o pior par
-adjacente tem ΔE 4,6 sob protanopia/deuteranopia (o piso é 6), e no tema claro
-todas ficam abaixo de 3:1 contra o branco. Elas continuam ótimas como bolinha
-de 9px, que é marca de identidade e não dado — mas pintar áreas com elas
-entregaria um gráfico ilegível para parte das pessoas.
+**A paleta das fatias não é a das categorias.** `CORES_CAT` foi medida com o
+validador e reprova como área preenchida: as dez cores ficam acima da faixa de
+luminosidade do tema escuro, o pior par adjacente tem ΔE 4,6 sob
+protanopia/deuteranopia (piso 6) e no tema claro todas ficam abaixo de 3:1
+contra o branco. Elas seguem ótimas como bolinha de 9px, que é marca de
+identidade, não dado.
 
-A cor das barras é o token `--grafico`, com um tom por tema (`#38bdf8` no
-escuro, `#0284c7` no claro), cada um validado contra a **sua** superfície:
-4,21:1 e 4,10:1. Não é um espelho automático do outro.
+As fatias usam `--cat-1` a `--cat-7`, uma ordem fixa e validada contra as
+superfícies deste app: pior par adjacente ΔE 9,1 no claro e 8,4 no escuro
+(alvo 8), visão normal 19,6 e 19,3 (piso 15). **A ordem é o mecanismo de
+segurança, não enfeite** — não reordene nem invente uma oitava cor. Três tons
+do tema claro ficam abaixo de 3:1 contra o branco; a compensação prevista é a
+legenda com nome e valor em texto, que é o que existe aqui.
 
-Outras decisões que vieram do guia de visualização:
+**A cor segue a categoria, não o tamanho dela.** As fatias visíveis são
+ordenadas por ordem de criação da categoria e recebem as vagas nessa
+sequência. Assim o mesmo conjunto de categorias pinta igual em qualquer mês, e
+trocar de mês não repinta tudo porque uma passou a outra.
 
-- **Cauda dobrada em "Outras".** Acima de oito faixas a leitura vira lista;
-  o excedente soma numa linha só.
-- **Ênfase em vez de categórico** no gráfico de meses: o mês aberto na cor
-  cheia, os outros em cinza. A pergunta ali é "como está este mês", não
-  "qual mês é qual".
-- **Sem legenda**, porque é uma série só e todas as barras têm rótulo direto.
-- **Números completos ficam na lista do mês.** O gráfico mostra tamanho
-  relativo; quem precisa do valor exato tem a tabela ao lado.
-
-Uma lição do processo: a primeira maquete saiu com todas as barras do mesmo
-tamanho, porque a formatação de moeda trocou o ponto por vírgula **dentro do
-`width:38.5%`** e o CSS inteiro virou lixo. O validador testa cor, não
-geometria — por isso o passo de renderizar e olhar não é opcional.
+A legenda é também a tabela: cor, nome, porcentagem e valor em texto. Nenhuma
+informação depende de distinguir as cores.
 
 ## Rotina de manutenção
 

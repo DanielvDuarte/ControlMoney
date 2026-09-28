@@ -1464,7 +1464,7 @@ function Painel({ usuario }) {
         </div>
 
         {verGrafico && !carregando && !falhaRede && gastos.length > 0 && (
-          <BarrasCategoria grupos={porCategoria} total={totais.total} mes={mesAtual} />
+          <RoscaCategorias grupos={porCategoria} total={totais.total} mes={mesAtual} categorias={categorias} />
         )}
 
         {!carregando && gastos.length > 0 && (
@@ -2554,20 +2554,36 @@ function LinhaMeta({ cat, valor, gasto, mudou, onMexer }) {
 //  categorias reprova nos testes de daltonismo quando vira área preenchida —
 //  ela continua servindo como bolinha de identidade, não como dado.
 // ============================================================
-const MAX_BARRAS = 8;
 
-function BarrasCategoria({ grupos, total, mes }) {
+// A rosca mostra o desenho do mês: o tamanho de cada categoria de relance.
+// Sete fatias no máximo; o resto soma em "Outras". Acima disso as fatias ficam
+// finas demais para serem lidas, e nenhuma paleta separa tantas cores.
+const MAX_FATIAS = 6;
+
+function RoscaCategorias({ grupos, total, mes, categorias }) {
   const { y, m } = parseKey(mes);
   if (!total) return null;
 
-  // Cauda dobrada em "Outras": além de ~8 faixas a leitura vira lista, não gráfico.
   const ordenados = [...grupos].sort((a, b) => b.subtotal - a.subtotal);
-  const principais = ordenados.slice(0, MAX_BARRAS);
-  const resto = ordenados.slice(MAX_BARRAS);
-  const linhas = resto.length
-    ? [...principais, { nome: `Outras ${resto.length}`, subtotal: soma2(resto) }]
+  const principais = ordenados.slice(0, MAX_FATIAS);
+  const resto = ordenados.slice(MAX_FATIAS);
+  const fatias = resto.length
+    ? [...principais, { nome: `Outras ${resto.length}`, subtotal: soma2(resto), sobra: true }]
     : principais;
-  const maior = linhas[0]?.subtotal || 1;
+
+  // A cor segue a categoria, não o tamanho dela: as visíveis são ordenadas
+  // pela ordem de criação e recebem as vagas nessa sequência. Assim o mesmo
+  // conjunto de categorias pinta igual em qualquer mês, e trocar de mês não
+  // repinta tudo só porque uma passou a outra.
+  const ordemCriacao = new Map(categorias.map((c, i) => [c.nome, i]));
+  const vagas = new Map(
+    [...principais].sort((a, b) => (ordemCriacao.get(a.nome) ?? 99) - (ordemCriacao.get(b.nome) ?? 99))
+      .map((g, i) => [g.nome, `var(--cat-${(i % 7) + 1})`])
+  );
+  const corDe = (f) => (f.sobra ? "var(--borda-3)" : vagas.get(f.nome));
+
+  const R = 54, GROSSURA = 19, VOLTA = 2 * Math.PI * R;
+  let acumulado = 0;
 
   return (
     <section style={S.grafCartao}>
@@ -2575,25 +2591,46 @@ function BarrasCategoria({ grupos, total, mes }) {
         <span style={S.grafTitulo}>Para onde foi o dinheiro</span>
         <span style={S.grafMes}>{MESES[m]} de {y}</span>
       </div>
-      <div style={S.grafLista}>
-      {linhas.map(l => (
-        <div key={l.nome} style={S.grafLinha}>
-          <div style={S.grafTopo}>
-            <span style={S.grafNome}>{l.nome}</span>
-            <span style={S.grafValor}>{brl(l.subtotal)}</span>
-          </div>
-          <div style={S.grafTrilho}>
-            <div style={{ ...S.grafBarra, width: `${Math.max(1.5, (l.subtotal / maior) * 100)}%` }}
-              title={`${l.nome}: ${brl(l.subtotal)} · ${pctTxt((l.subtotal / total) * 100)} do mês`} />
-          </div>
-          <div style={S.grafPct}>{pctTxt((l.subtotal / total) * 100)} do mês</div>
-        </div>
-      ))}
+
+      <div style={S.roscaWrap}>
+        <svg viewBox="0 0 130 130" style={S.roscaSvg} role="img"
+          aria-label={`Gastos de ${MESES[m]} por categoria, total ${brl(total)}`}>
+          <g transform="rotate(-90 65 65)">
+            {fatias.map(f => {
+              const fracao = f.subtotal / total;
+              // 2px de respiro entre fatias, sem deixar a menor sumir.
+              const arco = Math.max(1.5, fracao * VOLTA - 2);
+              const inicio = -acumulado * VOLTA;
+              acumulado += fracao;
+              return (
+                <circle key={f.nome} cx="65" cy="65" r={R} fill="none"
+                  stroke={corDe(f)} strokeWidth={GROSSURA}
+                  strokeDasharray={`${arco} ${VOLTA - arco}`} strokeDashoffset={inicio}>
+                  <title>{f.nome}: {brl(f.subtotal)} ({pctTxt(fracao * 100)})</title>
+                </circle>
+              );
+            })}
+          </g>
+          <text x="65" y="62" textAnchor="middle" style={S.roscaCentroRotulo}>gasto no mês</text>
+          <text x="65" y="77" textAnchor="middle" style={S.roscaCentroValor}>{brl(total)}</text>
+        </svg>
       </div>
+
+      {/* A legenda é também a tabela: cor, nome e valor em texto. Nenhuma
+          informação depende de distinguir as cores. */}
+      <ul style={S.legenda}>
+        {fatias.map(f => (
+          <li key={f.nome} style={S.legendaLinha}>
+            <span style={{ ...S.legendaCor, background: corDe(f) }} />
+            <span style={S.legendaNome}>{f.nome}</span>
+            <span style={S.legendaPct}>{pctTxt((f.subtotal / total) * 100)}</span>
+            <span style={S.legendaValor}>{brl(f.subtotal)}</span>
+          </li>
+        ))}
+      </ul>
     </section>
   );
 }
-
 function ModalMetas({ categorias, metas, gastoPorCategoria, mes, renda, onSalvar, onFechar }) {
   const { y, m } = parseKey(mes);
   const [rascunho, setRascunho] = useState({});
@@ -3233,15 +3270,16 @@ const S = {
   fixoDiaRotulo: { fontSize: 11.5, color: "var(--texto-5)" },
   fixoCartao: { border: "1px solid var(--borda)", background: "var(--superficie)", borderRadius: 11, padding: "10px 8px 10px 12px" },
   fixoTopo: { display: "flex", alignItems: "center", gap: 9 },
-  grafLista: { display: "flex", flexDirection: "column", gap: 13 },
-  grafLinha: { display: "flex", flexDirection: "column", gap: 4 },
-  grafTopo: { display: "flex", alignItems: "baseline", gap: 8 },
-  grafNome: { flex: 1, minWidth: 0, fontSize: 13.5, fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" },
-  grafValor: { fontSize: 13, fontWeight: 700, fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" },
-  // Trilho recessivo; a barra é a única coisa saturada da linha.
-  grafTrilho: { height: 10, borderRadius: 5, background: "var(--superficie-2)", overflow: "hidden" },
-  grafBarra: { height: "100%", background: "var(--grafico)", borderRadius: 5 },
-  grafPct: { fontSize: 11.5, color: "var(--texto-5)" },
+  roscaWrap: { display: "grid", placeItems: "center", padding: "4px 0 14px" },
+  roscaSvg: { width: "100%", maxWidth: 210, height: "auto", display: "block" },
+  roscaCentroRotulo: { fill: "var(--texto-5)", fontSize: "7px", fontWeight: 600 },
+  roscaCentroValor: { fill: "var(--texto)", fontSize: "12px", fontWeight: 800, fontVariantNumeric: "tabular-nums" },
+  legenda: { listStyle: "none", margin: 0, padding: 0, display: "flex", flexDirection: "column", gap: 8 },
+  legendaLinha: { display: "flex", alignItems: "center", gap: 9 },
+  legendaCor: { width: 11, height: 11, borderRadius: 3, flexShrink: 0 },
+  legendaNome: { flex: 1, minWidth: 0, fontSize: 13, fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" },
+  legendaPct: { fontSize: 11.5, color: "var(--texto-5)", fontVariantNumeric: "tabular-nums" },
+  legendaValor: { fontSize: 13, fontWeight: 700, fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" },
 
   grafCartao: { background: "var(--superficie)", border: "1px solid var(--borda)", borderRadius: 14, padding: "14px 14px 16px", marginBottom: 18 },
   grafCabecalho: { display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 8, marginBottom: 12 },
