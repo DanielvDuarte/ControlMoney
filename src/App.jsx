@@ -679,20 +679,68 @@ function Painel({ usuario }) {
 
   // Meta zerada não é meta: em vez de guardar um limite de R$ 0 — que deixaria
   // a categoria sempre "estourada" — a linha sai da tabela.
-  const definirMeta = async (categoriaId, valor) => {
-    const v = Number(valor) || 0;
-    setMetas(m => {
-      const novo = { ...m };
-      if (v > 0) novo[categoriaId] = v; else delete novo[categoriaId];
-      return novo;
+  // Salva as metas em lote e, se pedido, replica para os meses seguintes.
+  // Mesma regra das contas fixas: o mês aberto é o ponto de corte, e um mês
+  // que já tinha outra meta definida é preservado.
+  const MESES_REPLICA_META = 12;
+
+  const salvarMetas = async (alteracoes) => {
+    const { m, y } = parseKey(mesAtual);
+    const escolha = await perguntar({
+      titulo: `Salvar ${alteracoes.length} meta${alteracoes.length > 1 ? "s" : ""}?`,
+      texto: `Valem para ${MESES[m]}/${y}.`,
+      nota: `Replicando, elas passam a valer também nos próximos ${MESES_REPLICA_META - 1} meses — ` +
+            "menos onde você já tiver definido outra meta, que fica como está.",
+      acoes: [{ id: "so-este", rotulo: `Só em ${MESES[m]}` },
+              { id: "replicar", rotulo: "Deste mês em diante" }],
     });
+    if (!escolha) return false;
+
+    for (const a of alteracoes) {
+      const erro = await gravarMeta(mesAtual, a.categoria_id, a.valor);
+      if (erro) { setAviso({ texto: "Não consegui salvar a meta: " + erro.message, ids: [] }); return false; }
+    }
+    setMetas(Object.fromEntries(
+      Object.entries({ ...metas, ...Object.fromEntries(alteracoes.map(a => [a.categoria_id, a.valor])) })
+        .filter(([, v]) => Number(v) > 0).map(([k, v]) => [k, Number(v)])));
+
+    if (escolha !== "replicar") {
+      setAviso({ texto: `${alteracoes.length} meta${alteracoes.length > 1 ? "s" : ""} salva${alteracoes.length > 1 ? "s" : ""} em ${MESES[m]}`, ids: [] });
+      return true;
+    }
+
+    const adiante = Array.from({ length: MESES_REPLICA_META - 1 }, (_, i) => addMeses(mesAtual, i + 1));
+    const { data: existentes } = await supabase.from("metas")
+      .select("mes, categoria_id, valor").gte("mes", adiante[0]).lte("mes", adiante[adiante.length - 1]);
+
+    let criadas = 0, preservadas = 0;
+    for (const a of alteracoes) {
+      for (const mes of adiante) {
+        const atual = (existentes || []).find(x => x.mes === mes && x.categoria_id === a.categoria_id);
+        // Meta já definida e diferente da anterior: foi escolha daquele mês.
+        if (atual && Number(atual.valor) !== Number(a.valorAntigo || 0)) { preservadas++; continue; }
+        const erro = await gravarMeta(mes, a.categoria_id, a.valor);
+        if (!erro) criadas++;
+      }
+    }
+
+    const p = [`${alteracoes.length} meta${alteracoes.length > 1 ? "s" : ""} salva${alteracoes.length > 1 ? "s" : ""}`,
+               `${criadas} mês${criadas > 1 ? "es" : ""} à frente atualizado${criadas > 1 ? "s" : ""}`];
+    if (preservadas) p.push(`${preservadas} preservado${preservadas > 1 ? "s" : ""}`);
+    setAviso({ texto: p.join(" · "), ids: [] });
+    return true;
+  };
+
+  const gravarMeta = async (mes, categoriaId, valor) => {
+    const v = Number(valor) || 0;
     const { error } = v > 0
       ? await supabase.from("metas").upsert(
-          { user_id: usuario.id, mes: mesAtual, categoria_id: categoriaId, valor: v },
+          { user_id: usuario.id, mes, categoria_id: categoriaId, valor: v },
           { onConflict: "user_id,mes,categoria_id" })
-      : await supabase.from("metas").delete().eq("mes", mesAtual).eq("categoria_id", categoriaId);
+      : await supabase.from("metas").delete().eq("mes", mes).eq("categoria_id", categoriaId);
     return error;
   };
+
 
   // Gasto de cada categoria no mês, para a meta se comparar com ele.
   const gastoPorCategoria = useMemo(() => {
@@ -1488,9 +1536,9 @@ function Painel({ usuario }) {
         onConsentir={consentirAgente} onNivel={definirNivelAgente}
         onFechar={() => setModalAgente(false)} />}
       {modalPerfil && <ModalPerfil usuario={usuario} onFechar={() => setModalPerfil(false)} />}
-      {modalMetas && <ModalMetas categorias={categorias} metas={metas} mes={mesAtual}
+      {modalMetas && <ModalMetas categorias={categorias} metas={metas} mes={mesAtual} onSalvar={salvarMetas}
         gastoPorCategoria={gastoPorCategoria} renda={rendaTotal}
-        onDefinir={definirMeta} onFechar={() => setModalMetas(false)} />}
+        onFechar={() => setModalMetas(false)} />}
       {modalLixeira && <ModalLixeira onFechar={() => setModalLixeira(false)}
         onPerguntar={perguntar} mes={mesAtual} quantosNoMes={gastos.length} onLimparMes={limparMes}
         onMudou={() => { carregarCategorias(); carregarMes(mesAtual); }} />}
@@ -2432,53 +2480,58 @@ function ModalPerfil({ usuario, onFechar }) {
 //  Um limite por categoria, só para o mês aberto. A tela mostra ao lado o
 //  que já foi gasto, porque definir um teto sem ver o gasto atual é chutar.
 // ------------------------------------------------------------
-function LinhaMeta({ cat, meta, gasto, onDefinir }) {
-  const [v, setV] = useState(meta || "");
-  const [erro, setErro] = useState("");
-
-  const guardar = async () => {
-    if ((Number(v) || 0) === (Number(meta) || 0)) return;
-    const e = await onDefinir(cat.id, v);
-    setErro(!e ? ""
-      : /metas|relation|schema cache/i.test(e.message)
-        ? "O banco ainda não tem a tabela de metas: rode o schema.sql no Supabase."
-        : "Não consegui guardar: " + e.message);
-  };
-
-  const limite = Number(v) || 0;
+function LinhaMeta({ cat, valor, gasto, mudou, onMexer }) {
+  const limite = Number(valor) || 0;
   const sobra = limite - gasto;
-
   return (
-    <div style={S.metaLinhaModal}>
+    <div style={{ ...S.metaLinhaModal, borderColor: mudou ? "var(--ambar)" : "var(--borda)" }}>
       <div style={S.metaTopo}>
         <span style={{ ...S.dot, background: cat.cor }} />
         <span style={S.metaNome}>{cat.nome}</span>
-        <CampoValor style={S.metaCampo} value={v} onChange={setV} onBlur={guardar}
+        <CampoValor style={S.metaCampo} value={valor} onChange={v => onMexer(cat.id, v)}
           aria-label={`Meta de ${cat.nome}`} />
       </div>
       <div style={S.metaAbaixo}>
         {limite > 0
           ? <>gasto {brl(gasto)} · {sobra >= 0 ? `ainda dá para gastar ${brl(sobra)}` : `passou ${brl(-sobra)}`}</>
           : <>gasto {brl(gasto)} · sem meta</>}
+        {mudou && " · alterada"}
       </div>
-      {erro && <div style={{ ...S.erro, marginTop: 6, fontSize: 12 }}><AlertCircle size={13} /><span>{erro}</span></div>}
     </div>
   );
 }
-
-function ModalMetas({ categorias, metas, gastoPorCategoria, mes, renda, onDefinir, onFechar }) {
+function ModalMetas({ categorias, metas, gastoPorCategoria, mes, renda, onSalvar, onFechar }) {
   const { y, m } = parseKey(mes);
-  const comMeta = categorias.filter(c => metas[c.id] > 0);
-  const totalMetas = comMeta.reduce((s, c) => s + metas[c.id], 0);
+  const [rascunho, setRascunho] = useState({});
+  const [salvando, setSalvando] = useState(false);
+
+  const valorDe = (c) => (rascunho[c.id] !== undefined ? rascunho[c.id] : (metas[c.id] || ""));
+  const mexer = (id, v) => setRascunho(r => ({ ...r, [id]: v }));
+
+  const pendentes = Object.entries(rascunho).map(([categoria_id, v]) => {
+    const antes = Number(metas[categoria_id]) || 0;
+    const agora = Number(v) || 0;
+    return agora === antes ? null : { categoria_id, valor: agora, valorAntigo: antes };
+  }).filter(Boolean);
+
+  const guardar = async () => {
+    setSalvando(true);
+    const ok = await onSalvar(pendentes);
+    setSalvando(false);
+    if (ok) setRascunho({});
+  };
+
+  const comMeta = categorias.filter(c => Number(valorDe(c)) > 0);
+  const totalMetas = comMeta.reduce((s, c) => s + Number(valorDe(c)), 0);
   const gastoNasMetas = comMeta.reduce((s, c) => s + (gastoPorCategoria[c.id] || 0), 0);
 
   return (
     <Overlay onFechar={onFechar}>
       <h2 style={S.modalTitulo}>Metas de {MESES[m]}</h2>
       <p style={S.modalAjuda}>
-        Quanto você quer gastar em cada categoria neste mês. Vale só para{" "}
-        {MESES[m]} de {y}: um mês não precisa caber no mesmo teto do outro.
-        Deixe vazio nas categorias que você não quer limitar.
+        Quanto você quer gastar em cada categoria. Ao salvar, dá para valer só
+        em {MESES[m]} de {y} ou deste mês em diante. Deixe vazio nas categorias
+        que você não quer limitar.
       </p>
 
       {categorias.length === 0 ? (
@@ -2498,8 +2551,10 @@ function ModalMetas({ categorias, metas, gastoPorCategoria, mes, renda, onDefini
           )}
           <div style={S.catLista}>
             {categorias.map(c => (
-              <LinhaMeta key={c.id} cat={c} meta={metas[c.id] || 0}
-                gasto={gastoPorCategoria[c.id] || 0} onDefinir={onDefinir} />
+              <LinhaMeta key={c.id} cat={c} valor={valorDe(c)}
+                gasto={gastoPorCategoria[c.id] || 0}
+                mudou={pendentes.some(p => p.categoria_id === c.id)}
+                onMexer={mexer} />
             ))}
           </div>
           <p style={S.dicaCampo}>
@@ -2509,23 +2564,23 @@ function ModalMetas({ categorias, metas, gastoPorCategoria, mes, renda, onDefini
         </>
       )}
 
+      {pendentes.length > 0 && (
+        <div style={S.fixoAviso}>
+          {pendentes.length} meta{pendentes.length > 1 ? "s" : ""} por salvar. Ao
+          salvar, você escolhe entre valer só em <b>{MESES[m]}</b> ou deste mês em diante.
+        </div>
+      )}
+
       <div style={S.modalAcoes}>
         <button style={S.btnSec} onClick={onFechar}>Fechar</button>
+        <button style={{ ...S.btnPri, opacity: pendentes.length && !salvando ? 1 : 0.5 }}
+          disabled={!pendentes.length || salvando} onClick={guardar}>
+          {salvando ? "Salvando…" : "Salvar metas"}
+        </button>
       </div>
     </Overlay>
   );
 }
-
-// ------------------------------------------------------------
-//  Campo de dinheiro
-//  Os dígitos entram pela direita, como numa maquininha de cartão: digitar
-//  1, 2, 3, 4 dá 12,34. Não existe vírgula para esquecer nem para pôr no
-//  lugar errado — era assim que 1234 virava mil reais em vez de doze.
-//  Por fora ele entrega "12.34", o mesmo texto que o type=number entregava,
-//  então nada do que lê o valor precisou mudar.
-// ------------------------------------------------------------
-const CENTAVOS_MAX = 11;   // 999.999.999,99 — cabe no numeric(12,2) do banco
-
 function CampoValor({ value, onChange, style, ...resto }) {
   const centavos = Math.round((Number(value) || 0) * 100);
   const texto = centavos
