@@ -590,6 +590,38 @@ trocar de mês não repinta tudo porque uma passou a outra.
 A legenda é também a tabela: cor, nome, porcentagem e valor em texto. Nenhuma
 informação depende de distinguir as cores.
 
+## O agente pode propor, não executar
+
+O agente ganhou três ferramentas — `propor_meta`, `propor_conta_fixa` e
+`propor_gasto` — e o nome delas não é enfeite: **a Edge Function nunca escreve
+no banco**. Ela devolve o que o modelo propôs, o navegador desenha um cartão
+com os campos em português, e a gravação só acontece quando a pessoa toca em
+"Confirmar".
+
+Três razões para esse desenho, e vale entendê-las antes de "simplificar":
+
+- **O RLS continua sendo a única porta de escrita.** A gravação roda no
+  navegador, com a sessão da pessoa. A função não precisa de credencial de
+  serviço, e um defeito nela não vira escrita indevida.
+- **A proposta de um modelo é um pedido, não uma autorização.** Os dados que
+  alimentam a conversa vêm do banco do próprio usuário, mas nomes de gastos são
+  texto livre — e texto livre pode tentar instruir o modelo. O cartão de
+  confirmação é o que impede que uma instrução escondida num lançamento vire
+  uma gravação silenciosa.
+- **A execução reusa as funções que o menu já usa** (`gravarMeta`,
+  `criarFixo`, `alterarFixo`). Nada de caminho paralelo que evolui sozinho e
+  um dia diverge das regras de replicação.
+
+O cartão recusa sozinho o que não dá para cumprir: se a categoria proposta não
+existe, o botão fica desabilitado com o motivo à vista, em vez de criar uma
+categoria que a pessoa não pediu.
+
+Quanto ao protocolo: a função **não** devolve `tool_result` para a API. A
+conversa segue em texto e o que a pessoa decidir aparece no turno seguinte. A
+alternativa — guardar blocos de tool use no histórico — exigiria mudar o
+formato de `ia_mensagens`, que hoje é texto puro, em troca de nada que o
+usuário perceba.
+
 ## Rotina de manutenção
 
 **Alterar o app:** edite, `git push`, e o deploy sai sozinho em ~1 minuto.

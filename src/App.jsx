@@ -1324,6 +1324,56 @@ function Painel({ usuario }) {
     carregarMes(mesAtual);
   };
 
+  // Executa uma proposta do agente. Isto roda no navegador, com a sessão da
+  // pessoa: o RLS continua sendo a única porta de escrita, e a proposta só
+  // chega aqui depois de ela tocar em "Confirmar". Cada caminho reusa a mesma
+  // função que o app já usa no menu — nada de atalho paralelo.
+  const executarProposta = async (acao) => {
+    const c = acao.campos || {};
+    const cat = categorias.find(x => x.nome === c.categoria);
+    if (!cat) throw new Error(`A categoria "${c.categoria}" não existe.`);
+
+    if (acao.ferramenta === "propor_meta") {
+      const valor = Number(c.valor) || 0;
+      if (valor <= 0) throw new Error("O valor da meta precisa ser maior que zero.");
+      const erro = await gravarMeta(mesAtual, cat.id, valor);
+      if (erro) throw new Error(erro.message);
+      setMetas(m => ({ ...m, [cat.id]: valor }));
+      if (c.replicar) {
+        const adiante = Array.from({ length: MESES_REPLICA_META - 1 }, (_, i) => addMeses(mesAtual, i + 1));
+        for (const mes of adiante) await gravarMeta(mes, cat.id, valor);
+      }
+      return `Meta de ${cat.nome}: ${brl(valor)}${c.replicar ? ", deste mês em diante" : ` em ${MESES[parseKey(mesAtual).m]}`}.`;
+    }
+
+    if (acao.ferramenta === "propor_conta_fixa") {
+      const dia = Math.min(31, Math.max(1, Number(c.dia) || 1));
+      const novo = await criarFixo({ nome: c.nome, categoria_id: cat.id, subcategoria: "", dia });
+      if (!novo) throw new Error("Não consegui criar a conta fixa.");
+      if (Number(c.valor) > 0) await alterarFixo(novo.id, { valor: Number(c.valor) });
+      await carregarFixos();
+      carregarMes(mesAtual);
+      return `Conta fixa "${c.nome}" criada, vence dia ${dia}.`;
+    }
+
+    if (acao.ferramenta === "propor_gasto") {
+      const valor = Number(c.valor) || 0;
+      if (valor <= 0) throw new Error("O valor do gasto precisa ser maior que zero.");
+      const hoje = hojeISO();
+      const dia = c.dia ? Math.min(31, Math.max(1, Number(c.dia))) : (hoje.slice(0, 7) === mesAtual ? diaDe(hoje) : 1);
+      const { error } = await supabase.from("gastos").insert({
+        user_id: usuario.id, mes: mesAtual, nome: c.nome, valor,
+        categoria_id: cat.id, subcategoria: "", observacao: "",
+        data: diaEm(mesAtual, dia), pago: false,
+      });
+      if (error) throw new Error(error.message);
+      carregarMes(mesAtual);
+      return `Gasto "${c.nome}" de ${brl(valor)} lançado.`;
+    }
+
+    throw new Error("Proposta desconhecida.");
+  };
+
   const abrirNovo = () => { setErroGlobal(""); setEditando(null); setModalGasto(true); };
   const abrirEdicao = (g) => { setErroGlobal(""); setEditando({ ...g, categoriaNome: catPorId[g.categoria_id]?.nome }); setModalGasto(true); };
   const fechar = () => { setModalGasto(false); setEditando(null); };
@@ -1579,8 +1629,8 @@ function Painel({ usuario }) {
         onPreparar={prepararImportacao} onImportar={importarGastos} />}
       {modalFixos && <ModalFixos fixos={fixos} categorias={categorias} onFechar={() => setModalFixos(false)}
         mes={mesAtual} onAlterar={alterarFixo} onSalvar={salvarFixos} onRemover={removerFixo} />}
-      {modalAgente && <ModalAgente mes={mesAtual} perfil={iaPerfil}
-        onConsentir={consentirAgente} onNivel={definirNivelAgente}
+      {modalAgente && <ModalAgente mes={mesAtual} perfil={iaPerfil} categorias={categorias}
+        onConsentir={consentirAgente} onNivel={definirNivelAgente} onExecutar={executarProposta}
         onFechar={() => setModalAgente(false)} />}
       {modalPerfil && <ModalPerfil usuario={usuario} onFechar={() => setModalPerfil(false)} />}
       {modalMetas && <ModalMetas categorias={categorias} metas={metas} mes={mesAtual} onSalvar={salvarMetas}
@@ -2329,14 +2379,107 @@ const SUGESTOES = [
   "Quero juntar para uma viagem. Por onde começo?",
 ];
 
-function ModalAgente({ mes, perfil, onConsentir, onNivel, onFechar }) {
+// Cartão de confirmação de uma proposta do agente. Ele descreve em português
+// exatamente o que vai acontecer e só age com o toque da pessoa — a proposta
+// do modelo é um pedido, não uma ordem.
+function CartaoProposta({ acao, categorias, estado, onDecidir }) {
+  const c = acao.campos || {};
+  const existe = categorias.some(x => x.nome === c.categoria);
+
+  const titulo = {
+    propor_meta: "Criar uma meta",
+    propor_conta_fixa: "Criar uma conta fixa",
+    propor_gasto: "Lançar um gasto",
+  }[acao.ferramenta] || "Proposta";
+
+  const linhas = {
+    propor_meta: [
+      ["Categoria", c.categoria],
+      ["Teto por mês", brl(c.valor)],
+      ["Vale para", c.replicar ? "este mês e os seguintes" : "só este mês"],
+    ],
+    propor_conta_fixa: [
+      ["Conta", c.nome],
+      ["Categoria", c.categoria],
+      ["Valor por mês", c.valor > 0 ? brl(c.valor) : "a preencher a cada mês"],
+      ["Vence dia", String(c.dia)],
+    ],
+    propor_gasto: [
+      ["Gasto", c.nome],
+      ["Categoria", c.categoria],
+      ["Valor", brl(c.valor)],
+      ["Dia", c.dia ? String(c.dia) : "hoje"],
+    ],
+  }[acao.ferramenta] || [];
+
+  if (estado?.estado === "feita")
+    return <div style={S.propostaFeita}><Check size={13} strokeWidth={3} /> {estado.resumo}</div>;
+  if (estado?.estado === "recusada")
+    return <div style={S.propostaNota}>Proposta descartada.</div>;
+
+  return (
+    <div style={S.proposta}>
+      <div style={S.propostaTitulo}>{titulo}</div>
+      <dl style={S.propostaCampos}>
+        {linhas.map(([r, v]) => (
+          <div key={r} style={S.propostaLinha}>
+            <dt style={S.propostaRotulo}>{r}</dt>
+            <dd style={S.propostaValor}>{v}</dd>
+          </div>
+        ))}
+      </dl>
+      {c.porque && <div style={S.propostaPorque}>{c.porque}</div>}
+
+      {!existe ? (
+        <div style={{ ...S.erro, marginTop: 10, fontSize: 12 }}>
+          <AlertCircle size={13} />
+          <span>A categoria "{c.categoria}" não existe. Crie antes de aceitar.</span>
+        </div>
+      ) : estado?.estado === "erro" ? (
+        <div style={{ ...S.erro, marginTop: 10, fontSize: 12 }}>
+          <AlertCircle size={13} /><span>{estado.resumo}</span>
+        </div>
+      ) : null}
+
+      <div style={S.propostaAcoes}>
+        <button style={S.propostaNao} disabled={estado?.estado === "indo"}
+          onClick={() => onDecidir(acao, false)}>Agora não</button>
+        <button style={{ ...S.propostaSim, opacity: existe && estado?.estado !== "indo" ? 1 : 0.5 }}
+          disabled={!existe || estado?.estado === "indo"}
+          onClick={() => onDecidir(acao, true)}>
+          {estado?.estado === "indo" ? "Criando…" : "Confirmar"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function ModalAgente({ mes, perfil, categorias, onConsentir, onNivel, onExecutar, onFechar }) {
   const [mensagens, setMensagens] = useState([]);
   const [conversaId, setConversaId] = useState(null);
   const [texto, setTexto] = useState("");
   const [ocupado, setOcupado] = useState(false);
   const [erro, setErro] = useState("");
   const [gasto, setGasto] = useState(0);        // US$ desta conversa (fase de medição)
+  const [resolvidas, setResolvidas] = useState({});  // chave da proposta -> resultado
   const fim = useRef(null);
+
+  // Executar é sempre um ato da pessoa: o cartão só some depois do toque, e
+  // quem grava é o app com a sessão dela. O modelo nunca escreve no banco.
+  const decidir = async (acao, aceitar) => {
+    if (resolvidas[acao.chave]) return;
+    setResolvidas(r => ({ ...r, [acao.chave]: { estado: "indo" } }));
+    if (!aceitar) {
+      setResolvidas(r => ({ ...r, [acao.chave]: { estado: "recusada" } }));
+      return;
+    }
+    try {
+      const resumo = await onExecutar(acao);
+      setResolvidas(r => ({ ...r, [acao.chave]: { estado: "feita", resumo } }));
+    } catch (e) {
+      setResolvidas(r => ({ ...r, [acao.chave]: { estado: "erro", resumo: e?.message || String(e) } }));
+    }
+  };
 
   useEffect(() => { fim.current?.scrollIntoView({ behavior: "smooth" }); }, [mensagens, ocupado]);
 
@@ -2356,7 +2499,11 @@ function ModalAgente({ mes, perfil, onConsentir, onNivel, onFechar }) {
         throw new Error(detalhe);
       }
       setConversaId(data.conversaId);
-      setMensagens(ms => [...ms, { papel: "assistant", texto: data.resposta, uso: data.uso }]);
+      setMensagens(ms => [...ms, {
+        papel: "assistant", texto: data.resposta, uso: data.uso,
+        // Propostas chegam como dado a confirmar, nunca como coisa já feita.
+        acoes: (data.acoes || []).map((a, i) => ({ ...a, chave: `${ms.length}-${i}` })),
+      }]);
       setGasto(g => g + (data.uso?.custoUsd || 0));
     } catch (e) {
       setErro(e?.message || String(e));
@@ -2421,6 +2568,10 @@ function ModalAgente({ mes, perfil, onConsentir, onNivel, onFechar }) {
         {mensagens.map((m, i) => (
           <div key={i} style={m.papel === "user" ? S.agenteBalaoUser : S.agenteBalao}>
             {m.texto}
+            {(m.acoes || []).map(a => (
+              <CartaoProposta key={a.chave} acao={a} categorias={categorias}
+                estado={resolvidas[a.chave]} onDecidir={decidir} />
+            ))}
             {m.uso && (
               <div style={S.agenteCusto}>
                 {m.uso.entrada + m.uso.cacheLeitura + m.uso.cacheEscrita} tokens de entrada · {m.uso.saida} de saída
@@ -3314,6 +3465,19 @@ const S = {
   agenteNivel: { display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 2, width: "100%", textAlign: "left", background: "var(--superficie)", border: "1px solid var(--borda)", borderRadius: 11, padding: "10px 12px", color: "var(--texto)", fontSize: 14, cursor: "pointer" },
   agenteNivelAtivo: { borderColor: "var(--verde)", background: "rgba(34,197,94,0.12)" },
   agenteNivelAjuda: { fontSize: 11.5, color: "var(--texto-4)" },
+  proposta: { border: "1px solid var(--grafico)", background: "color-mix(in srgb, var(--grafico) 8%, transparent)", borderRadius: 12, padding: "12px 13px", marginTop: 10 },
+  propostaTitulo: { fontSize: 13, fontWeight: 700, color: "var(--grafico)", marginBottom: 8 },
+  propostaCampos: { margin: 0, display: "flex", flexDirection: "column", gap: 4 },
+  propostaLinha: { display: "flex", alignItems: "baseline", gap: 8 },
+  propostaRotulo: { fontSize: 12, color: "var(--texto-4)", minWidth: 96 },
+  propostaValor: { margin: 0, fontSize: 13, fontWeight: 600, flex: 1, minWidth: 0, overflowWrap: "anywhere" },
+  propostaPorque: { fontSize: 12, color: "var(--texto-4)", lineHeight: 1.5, marginTop: 9, fontStyle: "italic" },
+  propostaAcoes: { display: "flex", gap: 8, marginTop: 12 },
+  propostaNao: { flex: 1, background: "transparent", border: "1px solid var(--borda)", borderRadius: 9, padding: "9px", color: "var(--texto-3)", fontSize: 13, fontWeight: 600, cursor: "pointer" },
+  propostaSim: { flex: 1, background: "var(--verde)", border: "none", borderRadius: 9, padding: "9px", color: "var(--sobre-verde)", fontSize: 13, fontWeight: 700, cursor: "pointer" },
+  propostaFeita: { display: "flex", alignItems: "center", gap: 7, marginTop: 10, fontSize: 12.5, fontWeight: 600, color: "var(--verde-claro)" },
+  propostaNota: { marginTop: 10, fontSize: 12.5, color: "var(--texto-5)" },
+
   agenteLista: { display: "flex", flexDirection: "column", gap: 10, maxHeight: "46vh", overflowY: "auto", margin: "0 -4px", padding: "0 4px 4px" },
   agenteVazio: { border: "1px dashed var(--borda)", borderRadius: 12, padding: "14px", color: "var(--texto-4)" },
   agenteSugestao: { display: "block", width: "100%", textAlign: "left", background: "var(--superficie)", border: "1px solid var(--borda)", borderRadius: 10, padding: "9px 11px", marginTop: 6, color: "var(--texto-2)", fontSize: 13, cursor: "pointer" },

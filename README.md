@@ -86,6 +86,8 @@ No ar em **https://danielvduarte.github.io/ControlMoney/**
   começa depois de um aceite, porque é o único ponto do app em que os seus dados
   saem daqui. Ele explica tipos de investimento, mas não indica produto. Detalhes
   e como publicar: [SETUP.md](SETUP.md).
+- O **agente** pode propor uma meta, uma conta fixa ou um lançamento durante a
+  conversa. Ele não grava nada: aparece um cartão com os campos e você confirma.
 - **Analisar no Claude**: monta um resumo do mês (categorias, porcentagens,
   parcelas em aberto, comparativo com os meses anteriores) para você colar no
   Claude e trazer a resposta de volta, guardada naquele mês. Funciona na conta

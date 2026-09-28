@@ -201,6 +201,86 @@ Como responder:
 `.trim();
 
 // ------------------------------------------------------------
+//  Ferramentas
+//  A função NUNCA escreve no banco. Ela só devolve o que o modelo propôs;
+//  quem grava é o navegador, com a sessão da própria pessoa e depois de uma
+//  confirmação explícita. Duas razões: o RLS continua sendo a única porta de
+//  escrita, e a proposta de um modelo é sugestão, não autorização.
+// ------------------------------------------------------------
+const FERRAMENTAS = [
+  {
+    name: "propor_meta",
+    description:
+      "Propõe um teto de gasto para uma categoria no mês. Use quando a pessoa disser que quer " +
+      "limitar ou economizar numa categoria. Não grava nada: a pessoa ainda precisa confirmar.",
+    input_schema: {
+      type: "object",
+      properties: {
+        categoria: { type: "string", description: "Nome exato de uma categoria existente no retrato." },
+        valor: { type: "number", description: "Teto em reais, maior que zero." },
+        replicar: { type: "boolean", description: "true para valer também nos meses seguintes." },
+        porque: { type: "string", description: "Uma frase curta explicando de onde saiu esse número." },
+      },
+      required: ["categoria", "valor", "porque"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "propor_conta_fixa",
+    description:
+      "Propõe uma conta que se repete todo mês (aluguel, escola, assinatura). Use quando a pessoa " +
+      "citar uma despesa recorrente que ainda não está cadastrada. Não grava nada.",
+    input_schema: {
+      type: "object",
+      properties: {
+        nome: { type: "string" },
+        categoria: { type: "string", description: "Nome exato de uma categoria existente no retrato." },
+        valor: { type: "number", description: "Valor mensal esperado. Omita se muda todo mês (água, luz)." },
+        dia: { type: "integer", description: "Dia do vencimento, de 1 a 31." },
+        porque: { type: "string" },
+      },
+      required: ["nome", "categoria", "dia", "porque"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "propor_gasto",
+    description:
+      "Propõe um lançamento avulso no mês aberto. Use quando a pessoa contar um gasto que ainda " +
+      "não registrou. Não grava nada.",
+    input_schema: {
+      type: "object",
+      properties: {
+        nome: { type: "string" },
+        categoria: { type: "string", description: "Nome exato de uma categoria existente no retrato." },
+        valor: { type: "number" },
+        dia: { type: "integer", description: "Dia do mês, de 1 a 31. Omita para hoje." },
+        porque: { type: "string" },
+      },
+      required: ["nome", "categoria", "valor", "porque"],
+      additionalProperties: false,
+    },
+  },
+];
+
+const INSTRUCOES_FERRAMENTAS = `
+Você pode propor três coisas: uma meta, uma conta fixa ou um lançamento.
+
+Quando usar:
+- Só quando a pessoa pedir, ou concordar com uma sugestão sua. Nunca proponha por conta própria
+  no meio de uma explicação.
+- Uma proposta por vez. Se houver várias, faça a mais importante e ofereça as outras em texto.
+- A categoria precisa ser uma das que aparecem no retrato, escrita igual. Se nenhuma servir,
+  não proponha: diga qual categoria seria necessária e peça para a pessoa criar.
+
+Como se comportar:
+- A proposta NÃO grava nada. A pessoa vê um cartão e decide. Escreva como quem sugere, não como
+  quem já fez: "posso criar uma meta de R$ 800 para Mercado" — nunca "criei a meta".
+- Escreva também, em texto, o que está propondo e de onde tirou o número. O cartão mostra os
+  campos; o texto explica o raciocínio.
+`.trim();
+
+// ------------------------------------------------------------
 //  Handler
 // ------------------------------------------------------------
 export default {
@@ -286,9 +366,10 @@ export default {
           // Dois blocos, ambos em cache: as instruções nunca mudam, e o
           // retrato só muda quando os dados do mês mudam. Do segundo turno
           // em diante essa parte custa um décimo.
-          { type: "text", text: INSTRUCOES, cache_control: { type: "ephemeral" } },
+          { type: "text", text: `${INSTRUCOES}\n\n${INSTRUCOES_FERRAMENTAS}`, cache_control: { type: "ephemeral" } },
           { type: "text", text: `${NIVEIS[nivel]}\n\n${retrato}`, cache_control: { type: "ephemeral" } },
         ],
+        tools: FERRAMENTAS,
         messages: mensagens,
       });
     } catch (e: any) {
@@ -313,7 +394,16 @@ export default {
 
     const texto = (resposta.content || [])
       .filter((b: any) => b.type === "text").map((b: any) => b.text).join("\n").trim();
-    if (!texto) return json({ erro: "resposta vazia" }, 502);
+
+    // O que o modelo propôs. Vai para o navegador como dado a confirmar — não
+    // devolvemos tool_result para a API: a conversa segue em texto, e o que
+    // a pessoa decidir vira uma mensagem comum no próximo turno. Isso evita
+    // guardar estado de protocolo no banco só para um cartão de confirmação.
+    const acoes = (resposta.content || [])
+      .filter((b: any) => b.type === "tool_use")
+      .map((b: any) => ({ ferramenta: b.name, campos: b.input }));
+
+    if (!texto && !acoes.length) return json({ erro: "resposta vazia" }, 502);
 
     // Medição: é isto que responde "quanto custa" na hora de precificar.
     const u = resposta.usage || {};
@@ -327,7 +417,7 @@ export default {
 
     await supabase.from("ia_mensagens").insert([
       { user_id: userId, conversa_id: conversaId, papel: "user", texto: mensagem },
-      { user_id: userId, conversa_id: conversaId, papel: "assistant", texto },
+      { user_id: userId, conversa_id: conversaId, papel: "assistant", texto: texto || "(proposta)" },
     ]);
     await supabase.from("ia_conversas").update({ atualizada_em: new Date().toISOString() }).eq("id", conversaId);
     await supabase.from("ia_uso").insert({
@@ -339,6 +429,7 @@ export default {
     return json({
       conversaId,
       resposta: texto,
+      acoes,
       uso: { entrada, saida, cacheEscrita, cacheLeitura, custoUsd: Number(custo.toFixed(6)) },
     });
   }),
