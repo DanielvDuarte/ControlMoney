@@ -312,6 +312,20 @@ function Painel({ usuario }) {
   const [categorias, setCategorias] = useState([]);      // [{id, nome, cor, subs}]
   const [renda, setRenda] = useState(0);
   const [entradas, setEntradas] = useState([]);   // ganhos avulsos do mês
+  // Categorias recolhidas, por nome. Fica no aparelho: é preferência de quem
+  // olha, não dado do mês.
+  const [recolhidas, setRecolhidas] = useState(() => {
+    try { return new Set(JSON.parse(localStorage.getItem("categorias-recolhidas") || "[]")); }
+    catch { return new Set(); }
+  });
+
+  const alternarRecolhida = (cat) => setRecolhidas(antes => {
+    const novo = new Set(antes);
+    novo.has(cat) ? novo.delete(cat) : novo.add(cat);
+    try { localStorage.setItem("categorias-recolhidas", JSON.stringify([...novo])); } catch { /* privativa */ }
+    return novo;
+  });
+
   const [ordem, setOrdem] = useState(() => {
     // "data" era o nome antigo de "mais antigos"; quem já tinha escolhido
     // continua vendo a lista do mesmo jeito.
@@ -1439,6 +1453,18 @@ function Painel({ usuario }) {
 
         {!carregando && gastos.length > 0 && (
           <div style={S.barraOrdem}>
+            {!listaCorrida && porCategoria.length > 1 && (
+              <button style={S.btnRecolher}
+                onClick={() => {
+                  const todas = porCategoria.map(g => g.nome);
+                  const fecharTudo = todas.some(n => !recolhidas.has(n));
+                  const novo = new Set(fecharTudo ? todas : []);
+                  setRecolhidas(novo);
+                  try { localStorage.setItem("categorias-recolhidas", JSON.stringify([...novo])); } catch { /* privativa */ }
+                }}>
+                {porCategoria.some(g => !recolhidas.has(g.nome)) ? "recolher todas" : "abrir todas"}
+              </button>
+            )}
             <span style={S.barraOrdemRotulo}>Ordenar por</span>
             <select style={S.selectOrdem} value={ordem} onChange={e => setOrdem(e.target.value)} aria-label="Ordenar a lista">
               <option value="pendentes">a pagar primeiro</option>
@@ -1470,15 +1496,20 @@ function Painel({ usuario }) {
               const tomMeta = sobra < 0 ? "var(--vermelho)" : subtotal / meta >= 0.8 ? "var(--ambar)" : "var(--verde)";
               // Sem renda informada não há do que tirar porcentagem.
               const pct = rendaTotal > 0 ? (subtotal / rendaTotal) * 100 : null;
+              const fechada = recolhidas.has(cat);
               return (
                 <div key={cat} style={S.grupo}>
-                  <div style={S.grupoHead}>
+                  <button style={S.grupoHead} onClick={() => alternarRecolhida(cat)}
+                    aria-expanded={!fechada}
+                    title={fechada ? `Abrir ${cat}` : `Recolher ${cat}`}>
+                    <ChevronRight size={14} style={{ ...S.grupoSeta, transform: fechada ? "none" : "rotate(90deg)" }} />
                     <span style={{ ...S.dot, background: cor }} />
                     <span style={S.grupoNome}>{cat}</span>
+                    {fechada && <span style={S.grupoQtd}>{itens.length}</span>}
                     {pct !== null && <span style={S.grupoPct} title={`${cat} consome ${pctTxt(pct)} da renda do mês`}>{pctTxt(pct)}</span>}
                     <span style={S.grupoTotal}>{brl(subtotal)}</span>
-                  </div>
-                  {meta > 0 && (
+                  </button>
+                  {meta > 0 && !fechada && (
                     <button style={S.metaLinha} onClick={() => setModalMetas(true)}
                       title={`Meta de ${cat} neste mês: ${brl(meta)}. Toque para ajustar.`}>
                       <span style={S.metaBarra}>
@@ -1492,7 +1523,7 @@ function Painel({ usuario }) {
                       </span>
                     </button>
                   )}
-                  {subs.length > 0 && (
+                  {subs.length > 0 && !fechada && (
                     <div style={S.subsLinha}>
                       {subs.map(s => (
                         <span key={s.nome} style={{ ...S.subChip, ...(s.vago ? S.subChipVago : null) }}>
@@ -1502,7 +1533,7 @@ function Painel({ usuario }) {
                       ))}
                     </div>
                   )}
-                  {itens.map(g => cartaoGasto(g, false))}
+                  {!fechada && itens.map(g => cartaoGasto(g, false))}
                 </div>
               );
             })
@@ -3066,14 +3097,17 @@ const S = {
   resumoLabel: { fontSize: 11.5, color: "var(--texto-4)" },
   resumoVal: { fontSize: "clamp(14px, 4.2vw, 16px)", fontWeight: 700, fontVariantNumeric: "tabular-nums" },
 
-  barraOrdem: { display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 7, marginBottom: 10 },
+  barraOrdem: { display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 7, marginBottom: 10, flexWrap: "wrap" },
+  btnRecolher: { marginRight: "auto", background: "transparent", border: "1px solid var(--borda)", borderRadius: 8, padding: "5px 10px", color: "var(--texto-4)", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" },
   barraOrdemRotulo: { fontSize: 12, color: "var(--texto-5)" },
   selectOrdem: { background: "var(--superficie)", border: "1px solid var(--borda)", borderRadius: 8, padding: "5px 8px", color: "var(--texto-3)", fontSize: 12.5, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" },
 
   lista: { display: "flex", flexDirection: "column", gap: 20 },
   vazio: { textAlign: "center", padding: "48px 20px", color: "var(--texto-4)", border: "1px dashed var(--borda)", borderRadius: 14 },
   grupo: { display: "flex", flexDirection: "column", gap: 7 },
-  grupoHead: { display: "flex", alignItems: "center", gap: 8, padding: "0 4px 2px" },
+  grupoHead: { display: "flex", alignItems: "center", gap: 8, padding: "2px 4px 4px", width: "100%", background: "transparent", border: "none", color: "inherit", font: "inherit", textAlign: "left", cursor: "pointer" },
+  grupoSeta: { color: "var(--texto-5)", flexShrink: 0, transition: "transform .15s" },
+  grupoQtd: { fontSize: 11, fontWeight: 700, color: "var(--texto-5)", background: "var(--superficie-2)", border: "1px solid var(--borda)", borderRadius: 99, padding: "1px 7px" },
   dot: { width: 9, height: 9, borderRadius: 99, flexShrink: 0 },
   grupoNome: { fontWeight: 700, fontSize: 14, flex: 1, letterSpacing: "-0.01em" },
   grupoPct: { fontSize: 11, fontWeight: 600, color: "var(--texto-4)", background: "var(--superficie-2)", border: "1px solid var(--borda)", borderRadius: 99, padding: "1px 7px", fontVariantNumeric: "tabular-nums" },
