@@ -1716,7 +1716,10 @@ function ModalEntradas({ renda, entradas, mes, onFechar, onSalvarRenda, onAdicio
       )}
 
       <div style={S.entradaForm}>
+        {/* Enter também adiciona: no teclado do celular o botão pode ficar
+            escondido atrás dele. */}
         <CampoValor style={{ ...S.input, flex: "0 0 110px" }} value={valor} onChange={setValor}
+          onKeyDown={ev => ev.key === "Enter" && incluir()}
           aria-label="Valor da entrada" />
         <input style={{ ...S.input, flex: 1, minWidth: 0 }} value={descricao}
           onChange={ev => setDescricao(ev.target.value)}
@@ -2870,20 +2873,52 @@ function ModalMetas({ categorias, metas, gastoPorCategoria, mes, renda, onSalvar
     </Overlay>
   );
 }
-function CampoValor({ value, onChange, style, ...resto }) {
-  const centavos = Math.round((Number(value) || 0) * 100);
-  const texto = centavos
+
+// ------------------------------------------------------------
+//  Campo de dinheiro
+//  Os dígitos entram pela direita, como numa maquininha de cartão: digitar
+//  1, 2, 3, 4 dá 12,34. Não existe vírgula para esquecer nem para pôr no
+//  lugar errado — era assim que 1234 virava mil reais em vez de doze.
+//  Por fora ele entrega "12.34", o mesmo texto que o type=number entregava,
+//  então nada do que lê o valor precisou mudar.
+// ------------------------------------------------------------
+const CENTAVOS_MAX = 11;   // 999.999.999,99 — cabe no numeric(12,2) do banco
+
+const formatarValor = (v) => {
+  const centavos = Math.round((Number(v) || 0) * 100);
+  return centavos
     ? (centavos / 100).toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })
     : "";
+};
+
+function CampoValor({ value, onChange, style, ...resto }) {
+  // O que aparece no campo é estado DELE, não do componente de cima. Antes o
+  // texto vinha de `value`: cada tecla ia até o pai e só voltava formatada, e
+  // no Safari do iPhone essa volta não acontecia — o teclado abria, a pessoa
+  // digitava e o campo continuava vazio. Agora ele se redesenha na hora e
+  // avisa o pai depois; se o valor mudar de fora, o efeito abaixo sincroniza.
+  const [texto, setTexto] = useState(() => formatarValor(value));
+  const meu = useRef(value);
+
+  useEffect(() => {
+    if (String(value ?? "") === String(meu.current ?? "")) return;
+    meu.current = value;
+    setTexto(formatarValor(value));
+  }, [value]);
 
   const mudar = (e) => {
     const digitos = e.target.value.replace(/\D/g, "").replace(/^0+/, "").slice(0, CENTAVOS_MAX);
-    onChange(digitos ? (Number(digitos) / 100).toFixed(2) : "");
+    const numero = digitos ? (Number(digitos) / 100).toFixed(2) : "";
+    meu.current = numero;
+    setTexto(formatarValor(numero));
+    onChange(numero);
   };
 
   return (
-    <input type="text" inputMode="numeric" style={style} value={texto} onChange={mudar}
-      placeholder="0,00" aria-label="Valor em reais" {...resto} />
+    <input type="text" inputMode="decimal" style={style} value={texto} onChange={mudar}
+      placeholder="0,00" aria-label="Valor em reais"
+      autoComplete="off" autoCorrect="off" autoCapitalize="off" spellCheck={false}
+      {...resto} />
   );
 }
 
