@@ -671,6 +671,33 @@ function Painel({ usuario }) {
     await carregarMes(mesAtual);
   };
 
+  // Saldo não comprometido do mês anterior (renda + entradas − gastos), para
+  // virar entrada avulsa no mês atual. `jaImportado` evita lançar duas vezes.
+  const buscarSaldoAnterior = async () => {
+    const ant = addMeses(mesAtual, -1);
+    const [r, en, g] = await Promise.all([
+      supabase.from("meses").select("renda").eq("mes", ant).maybeSingle(),
+      supabase.from("entradas").select("valor").eq("mes", ant),
+      supabase.from("gastos").select("valor").eq("mes", ant),
+    ]);
+    if (r.error || en.error || g.error) throw (r.error || en.error || g.error);
+    const soma = (l) => (l || []).reduce((t, x) => t + Number(x.valor || 0), 0);
+    const saldo = Number(r.data?.renda || 0) + soma(en.data) - soma(g.data);
+    const marca = `saldo-anterior:${ant}`;
+    return { mes: ant, saldo, jaImportado: entradas.some(e => e.fitid === marca) };
+  };
+
+  const importarSaldoAnterior = async ({ mes: ant, saldo }) => {
+    const { y, m } = parseKey(ant);
+    const { error } = await supabase.from("entradas").insert({
+      user_id: usuario.id, mes: mesAtual, valor: saldo,
+      descricao: `Saldo de ${MESES[m].toLowerCase()}/${y}`,
+      data: `${mesAtual}-01`, fitid: `saldo-anterior:${ant}`,
+    });
+    if (error) throw error;
+    await carregarMes(mesAtual);
+  };
+
   const removerEntrada = async (e) => {
     const escolha = await perguntar({
       titulo: "Remover esta entrada?",
@@ -1618,7 +1645,8 @@ function Painel({ usuario }) {
         onFechar={fechar} onSalvar={salvarGasto} />}
       {editRenda && <ModalEntradas renda={renda} entradas={entradas} mes={mesAtual}
         onFechar={() => setEditRenda(false)} onSalvarRenda={definirRenda}
-        onAdicionar={adicionarEntrada} onRemover={removerEntrada} />}
+        onAdicionar={adicionarEntrada} onRemover={removerEntrada}
+        onBuscarSaldoAnterior={buscarSaldoAnterior} onImportarSaldo={importarSaldoAnterior} />}
       {modalCategorias && <ModalCategorias categorias={categorias} onFechar={() => setModalCategorias(false)}
         onRemoverCat={removerCategoria} onRemoverSub={removerSub}
         onRenomearCat={renomearCategoria} onRenomearSub={renomearSub} />}
@@ -1658,7 +1686,7 @@ function Painel({ usuario }) {
 // ============================================================
 //  Modais
 // ============================================================
-function ModalEntradas({ renda, entradas, mes, onFechar, onSalvarRenda, onAdicionar, onRemover }) {
+function ModalEntradas({ renda, entradas, mes, onFechar, onSalvarRenda, onAdicionar, onRemover, onBuscarSaldoAnterior, onImportarSaldo }) {
   const [v, setV] = useState(renda || "");
   const [valor, setValor] = useState("");
   const [descricao, setDescricao] = useState("");
@@ -1671,6 +1699,26 @@ function ModalEntradas({ renda, entradas, mes, onFechar, onSalvarRenda, onAdicio
 
   const extra = entradas.reduce((s, e) => s + Number(e.valor || 0), 0);
   const total = (Number(v) || 0) + extra;
+
+  // Saldo que sobrou do mês anterior, oferecido como entrada. Só aparece se
+  // sobrou algo e ainda não foi importado.
+  const [anterior, setAnterior] = useState(null);
+  useEffect(() => {
+    let vivo = true;
+    onBuscarSaldoAnterior().then(r => { if (vivo) setAnterior(r); }).catch(() => {});
+    return () => { vivo = false; };
+  }, [entradas.length]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const importarSaldo = async () => {
+    setErro(""); setOcupado(true);
+    try {
+      await onImportarSaldo(anterior);
+    } catch (e) {
+      setErro("Não consegui importar o saldo: " + (e?.message || e));
+    } finally {
+      setOcupado(false);
+    }
+  };
 
   const incluir = async () => {
     if (!valor || Number(valor) <= 0) return setErro("Informe um valor maior que zero.");
@@ -1689,6 +1737,13 @@ function ModalEntradas({ renda, entradas, mes, onFechar, onSalvarRenda, onAdicio
     <Overlay onFechar={onFechar}>
       <h2 style={S.modalTitulo}>Entradas do mês</h2>
       <p style={S.modalAjuda}>É sobre a soma delas que o saldo é calculado.</p>
+
+      {anterior && anterior.saldo > 0 && !anterior.jaImportado && (
+        <button style={{ ...S.btnCriarCat, opacity: ocupado ? 0.5 : 1, marginBottom: 12 }}
+          disabled={ocupado} onClick={importarSaldo}>
+          Importar saldo de {MESES[parseKey(anterior.mes).m].toLowerCase()} · {brl(anterior.saldo)}
+        </button>
+      )}
 
       <label style={S.label}>Renda fixa (salário)</label>
       <CampoValor style={S.input} value={v} onChange={setV}
