@@ -993,7 +993,7 @@ function Painel({ usuario }) {
   };
 
   const salvarGastoInterno = async (form) => {
-    const { nome, valor, valorUltima, categoria, subcategoria, observacao, data, parcelas, fixo } = form;
+    const { nome, valor, valorUltima, categoria, subcategoria, observacao, data, parcelas, fixo, pago } = form;
     const dia = diaDe(data);
     const cat = await garantirCategoria(categoria);
     if (subcategoria) await registrarSub(cat, subcategoria);
@@ -1108,7 +1108,7 @@ function Painel({ usuario }) {
       data: diaEm(addMeses(mesAtual, i), dia),
       categoria_id: cat.id, subcategoria: subcategoria || "", observacao: observacao || "",
       fixo_id: i === 0 ? fixoId : null,
-      pago: false, grupo_parcela: grupo,
+      pago: i === 0 ? !!pago : false, grupo_parcela: grupo,
       parcela_atual: n > 1 ? i + 1 : null,
       total_parcelas: n > 1 ? n : null,
     }));
@@ -2227,6 +2227,7 @@ function ModalGasto({ categorias, mes, editando, erroExterno, onCriarCategoria, 
   const [criandoOcupado, setCriandoOcupado] = useState(false);
   const [criandoSubOcupado, setCriandoSubOcupado] = useState(false);
   const [fixo, setFixo] = useState(false);      // repete todo mês, sem fim
+  const [pago, setPago] = useState(false);      // já foi pago na hora de lançar
   const [erro, setErro] = useState("");
 
   const catFinal = criandoCat ? novaCat.trim() : categoria;
@@ -2285,7 +2286,7 @@ function ModalGasto({ categorias, mes, editando, erroExterno, onCriarCategoria, 
     onSalvar({
       nome: nome.trim(), categoria: catFinal,
       subcategoria: criandoSub ? novaSub.trim() : subcategoria,
-      observacao: observacao.trim(), data, fixo,
+      observacao: observacao.trim(), data, fixo, pago,
       valor: porMes, valorUltima: ultima, parcelas,
     });
   };
@@ -2359,6 +2360,14 @@ function ModalGasto({ categorias, mes, editando, erroExterno, onCriarCategoria, 
       <label style={S.label}>Observação <span style={{ color: "var(--texto-4)", fontWeight: 400 }}>(opcional)</span></label>
       <textarea style={{ ...S.input, minHeight: 62, resize: "vertical" }} value={observacao}
         onChange={e => setObservacao(e.target.value)} placeholder="Ex: negociado até dezembro, conferir reajuste…" />
+
+      {!editando && (
+        <label style={S.caixaFixo}>
+          <input type="checkbox" checked={pago} onChange={e => setPago(e.target.checked)} />
+          <b>Já paguei esse gasto</b>
+          {parcelas > 1 && <span style={{ color: "var(--texto-4)", fontWeight: 400 }}> (marca só a primeira parcela)</span>}
+        </label>
+      )}
 
       {editando?.fixo_id ? (
         <div style={S.avisoFixo}>
