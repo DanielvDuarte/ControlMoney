@@ -327,12 +327,15 @@ function Painel({ usuario }) {
   });
 
   const [ordem, setOrdem] = useState(() => {
-    // "data" era o nome antigo de "mais antigos"; quem já tinha escolhido
-    // continua vendo a lista do mesmo jeito.
+    // Nomes antigos continuam valendo para quem já tinha uma opção escolhida:
+    // "data" virou "antigos"; "pendentes" (a pagar agrupado) virou a lista
+    // corrida "a pagar · maior"; "nome" virou "A → Z"; "valor" virou "maior
+    // valor" corrido. Assim ninguém abre o app e estranha a lista mudada.
+    const legado = { data: "antigos", pendentes: "pagar-maior", nome: "az", valor: "valor-maior" };
     try {
       const salva = localStorage.getItem("ordem-lista");
-      return salva === "data" ? "antigos" : salva || "pendentes";
-    } catch { return "pendentes"; }
+      return legado[salva] || salva || "pagar-maior";
+    } catch { return "pagar-maior"; }
   });
   const [gastos, setGastos] = useState([]);
   const [carregando, setCarregando] = useState(true);
@@ -544,9 +547,14 @@ function Painel({ usuario }) {
     return comSub;
   };
 
-  // Ordenação da lista. Vale nos dois níveis: dentro de cada categoria e entre
-  // as categorias — senão, em "pendentes primeiro", um grupo todo pago ficaria
-  // no meio da tela e a rolagem continuaria necessária.
+  // Só dois modos mostram os gastos agrupados por categoria; todos os outros
+  // vêm numa lista corrida. O gráfico de rosca usa `porCategoria` sempre, então
+  // ele continua montando os grupos mesmo quando a lista aparece corrida.
+  const AGRUPA_POR_CATEGORIA = ordem === "cat-maior" || ordem === "cat-menor";
+
+  // Ordenação agrupada. Vale nos dois níveis: dentro de cada categoria e entre
+  // as categorias. Em "menor", a categoria que gastou menos vem primeiro e,
+  // dentro dela, o gasto menor no topo; em "maior", o contrário.
   const porCategoria = useMemo(() => {
     const grupos = {};
     gastos.forEach(g => {
@@ -554,12 +562,11 @@ function Painel({ usuario }) {
       (grupos[nome] ||= []).push(g);
     });
 
-    const porData = (a, b) => String(a.data || "9999").localeCompare(String(b.data || "9999"));
-    const dentro = {
-      pendentes: (a, b) => (a.pago === b.pago ? porData(a, b) : a.pago ? 1 : -1),
-      nome: (a, b) => a.nome.localeCompare(b.nome, "pt-BR"),
-      valor: (a, b) => Number(b.valor || 0) - Number(a.valor || 0),
-    }[ordem] || porData;
+    const menor = ordem === "cat-menor";
+    const dentro = (a, b) => {
+      const d = Number(a.valor || 0) - Number(b.valor || 0);
+      return menor ? d : -d;
+    };
 
     const lista = Object.entries(grupos).map(([nome, itens]) => {
       const ordenados = [...itens].sort(dentro);
@@ -572,25 +579,38 @@ function Painel({ usuario }) {
       };
     });
 
-    const entre = {
-      // Grupos com algo em aberto primeiro; entre eles, o maior pendente no topo.
-      pendentes: (a, b) => (a.pendente === b.pendente
-        ? soma(b.itens.filter(g => !g.pago)) - soma(a.itens.filter(g => !g.pago))
-        : a.pendente ? -1 : 1),
-      nome: (a, b) => a.nome.localeCompare(b.nome, "pt-BR"),
-      valor: (a, b) => b.subtotal - a.subtotal,
-    }[ordem] || (() => 0);
-
+    const entre = (a, b) => menor ? a.subtotal - b.subtotal : b.subtotal - a.subtotal;
     return lista.sort(entre);
   }, [gastos, catPorId, ordem]);
 
-  // "Mais recentes" e "mais antigos" são sobre a linha do tempo, não sobre
-  // categorias: a lista vem corrida, um lançamento atrás do outro, e cada
-  // cartão mostra a própria categoria no lugar do cabeçalho do grupo.
+  // Lista corrida (sem dividir por categoria): cada cartão mostra a própria
+  // categoria no lugar do cabeçalho do grupo. Cobre valor, alfabético, data e
+  // "a pagar". Devolve null nos modos agrupados, e aí a tela cai no porCategoria.
   const listaCorrida = useMemo(() => {
-    const sentido = { antigos: 1, recentes: -1 }[ordem];
-    return sentido ? [...gastos].sort(porIdade(sentido)) : null;
-  }, [gastos, ordem]);
+    if (AGRUPA_POR_CATEGORIA) return null;
+
+    const valor = (a, b) => Number(a.valor || 0) - Number(b.valor || 0);
+    const nome = (a, b) => a.nome.localeCompare(b.nome, "pt-BR");
+    // "A pagar" joga o que falta pagar para o topo; entre os de mesmo estado,
+    // aplica a segunda chave (maior/menor valor ou alfabético).
+    const aPagar = (segunda) => (a, b) =>
+      a.pago === b.pago ? segunda(a, b) : a.pago ? 1 : -1;
+
+    const comparadores = {
+      "valor-maior": (a, b) => -valor(a, b),
+      "valor-menor": valor,
+      "az": nome,
+      "za": (a, b) => -nome(a, b),
+      "recentes": porIdade(-1),
+      "antigos": porIdade(1),
+      "pagar-maior": aPagar((a, b) => -valor(a, b)),
+      "pagar-menor": aPagar(valor),
+      "pagar-az": aPagar(nome),
+    };
+
+    const cmp = comparadores[ordem] || comparadores["valor-maior"];
+    return [...gastos].sort(cmp);
+  }, [gastos, ordem, AGRUPA_POR_CATEGORIA]);
 
   // ---------- confirmação e lixeira ----------
   // Pergunta antes de apagar. Dá para usar com `await`, como o window.confirm,
@@ -1559,11 +1579,27 @@ function Painel({ usuario }) {
             )}
             <span style={S.barraOrdemRotulo}>Ordenar por</span>
             <select style={S.selectOrdem} value={ordem} onChange={e => setOrdem(e.target.value)} aria-label="Ordenar a lista">
-              <option value="pendentes">a pagar primeiro</option>
-              <option value="recentes">mais recentes</option>
-              <option value="antigos">mais antigos</option>
-              <option value="nome">nome</option>
-              <option value="valor">maior valor</option>
+              <optgroup label="A pagar primeiro">
+                <option value="pagar-maior">a pagar · maior valor</option>
+                <option value="pagar-menor">a pagar · menor valor</option>
+                <option value="pagar-az">a pagar · A → Z</option>
+              </optgroup>
+              <optgroup label="Por categoria">
+                <option value="cat-maior">categoria · maior valor</option>
+                <option value="cat-menor">categoria · menor valor</option>
+              </optgroup>
+              <optgroup label="Por valor">
+                <option value="valor-maior">maior valor</option>
+                <option value="valor-menor">menor valor</option>
+              </optgroup>
+              <optgroup label="Alfabético">
+                <option value="az">A → Z</option>
+                <option value="za">Z → A</option>
+              </optgroup>
+              <optgroup label="Por data">
+                <option value="recentes">mais recentes</option>
+                <option value="antigos">mais antigos</option>
+              </optgroup>
             </select>
           </div>
         )}
