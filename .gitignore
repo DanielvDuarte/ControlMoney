@@ -4,3 +4,4 @@ dist/
 .env.local
 *.log
 __pycache__/
+package-lock.json
