@@ -606,6 +606,8 @@ function Painel({ usuario }) {
       "pagar-maior": aPagar((a, b) => -valor(a, b)),
       "pagar-menor": aPagar(valor),
       "pagar-az": aPagar(nome),
+      "pagar-recentes": aPagar(porIdade(-1)),
+      "pagar-antigos": aPagar(porIdade(1)),
     };
 
     const cmp = comparadores[ordem] || comparadores["valor-maior"];
@@ -1583,6 +1585,8 @@ function Painel({ usuario }) {
                 <option value="pagar-maior">a pagar · maior valor</option>
                 <option value="pagar-menor">a pagar · menor valor</option>
                 <option value="pagar-az">a pagar · A → Z</option>
+                <option value="pagar-recentes">a pagar · mais recentes</option>
+                <option value="pagar-antigos">a pagar · mais antigos</option>
               </optgroup>
               <optgroup label="Por categoria">
                 <option value="cat-maior">categoria · maior valor</option>
