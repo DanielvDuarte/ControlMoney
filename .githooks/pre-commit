@@ -1,0 +1,16 @@
+#!/bin/sh
+# Sobe a versão do package.json a cada commit e já inclui a mudança no commit.
+#
+# Instalação (uma vez por clone):
+#   git config core.hooksPath .githooks
+#
+# Para pular num commit específico: git commit --no-verify
+set -e
+
+# Durante merge/rebase não faz sentido subir versão; evita conflito bobo.
+if [ -f "$(git rev-parse --git-dir)/MERGE_HEAD" ]; then
+  exit 0
+fi
+
+node scripts/bump-version.mjs
+git add package.json

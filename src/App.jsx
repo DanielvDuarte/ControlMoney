@@ -3,6 +3,9 @@ import { Plus, Check, Trash2, ChevronLeft, ChevronRight, X, Pencil, AlertCircle,
 import { supabase } from "./lib/supabase";
 
 // ---------- helpers ----------
+// Injetada no build pelo Vite (define) a partir do package.json. O fallback
+// cobre ambientes que não passam pelo bundler, como testes avulsos.
+const APP_VERSION = typeof __APP_VERSION__ !== "undefined" ? __APP_VERSION__ : "dev";
 const MESES = ["Janeiro","Fevereiro","Março","Abril","Maio","Junho","Julho","Agosto","Setembro","Outubro","Novembro","Dezembro"];
 const monthKey = (y, m) => `${y}-${String(m + 1).padStart(2, "0")}`;
 const parseKey = (k) => { const [y, m] = k.split("-").map(Number); return { y, m: m - 1 }; };
@@ -1478,7 +1481,7 @@ function Painel({ usuario }) {
     <Tela>
       <div style={S.wrap} className="nao-imprimir">
         <header style={S.header}>
-          <div style={S.marca}><Marca tamanho={24} /><span>ControlMoney</span></div>
+          <div style={S.marca}><Marca tamanho={24} /><span>ControlMoney</span><span style={S.versao}>v{APP_VERSION}</span></div>
           <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
             <button style={S.btnNav} onClick={() => navegarMes(-1)} aria-label="Mês anterior"><ChevronLeft size={18} /></button>
             <div style={S.mesLabel}>{MESES[m]} <span style={{ color: "var(--texto-4)" }}>{y}</span></div>
@@ -3468,6 +3471,7 @@ const S = {
 
   header: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, flexWrap: "wrap", marginBottom: 18 },
   marca: { display: "flex", alignItems: "center", gap: 8, fontWeight: 700, fontSize: 17, letterSpacing: "-0.01em" },
+  versao: { fontWeight: 500, fontSize: 11, color: "var(--texto-4)", alignSelf: "flex-end", paddingBottom: 2 },
   btnNav: { width: 34, height: 34, borderRadius: 9, border: "1px solid var(--borda)", background: "var(--superficie)", color: "var(--texto-2)", display: "grid", placeItems: "center", cursor: "pointer" },
   btnPerfil: { width: 34, height: 34, borderRadius: 99, border: "1px solid var(--borda)", background: "var(--superficie)", padding: 0, display: "grid", placeItems: "center", cursor: "pointer", flexShrink: 0 },
   avatarLetra: { display: "grid", placeItems: "center", background: "var(--verde)", color: "var(--sobre-verde)", fontWeight: 800, letterSpacing: "-0.02em" },

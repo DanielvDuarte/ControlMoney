@@ -199,6 +199,20 @@ npm install
 npm run dev               # abre em http://localhost:5173
 ```
 
+### Versão na tela
+
+O cabeçalho mostra a versão do app (ex.: `v1.0.4`), lida do `package.json` no
+build. Para que ela suba sozinha a cada commit, instale o hook uma vez por
+clone:
+
+```bash
+git config core.hooksPath .githooks
+```
+
+A partir daí, todo `git commit` incrementa o patch do `package.json`
+(`1.0.0` → `1.0.1` → …) e já inclui a mudança no próprio commit. Para pular num
+commit específico: `git commit --no-verify`.
+
 ---
 
 ## Estrutura
